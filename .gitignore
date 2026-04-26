@@ -1,0 +1,15 @@
+.venv/
+.playwright/
+build/
+dist/
+final_exe/
+data/
+.pytest_cache/
+.ruff_cache/
+pytest-cache-files-*/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+.env.local
