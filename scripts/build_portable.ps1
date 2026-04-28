@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string]$OutputDir = "final_exe",
     [string]$AppName = "脐橙浏览器",
     [string]$IconRelativePath = "app/assets/favicon.ico"
