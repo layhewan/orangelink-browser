@@ -130,6 +130,7 @@ class DesktopLauncherWindow(QMainWindow):
             "window_title": "脐橙浏览器启动器",
             "hero_title": "脐橙浏览器启动器",
             "hero_subtitle": "配置代理、指纹参数与会话管理的一体化桌面控制台",
+            "legal_notice": "本软件为开源免费软件，仅适用于学习交流，请勿将其使用于任何违法活动。",
             "hero_chip": "桌面界面",
             "lang_label": "语言",
             "group_config_editor": "配置编辑器",
@@ -218,6 +219,7 @@ class DesktopLauncherWindow(QMainWindow):
             "window_title": "Navel Orange Browser Launcher",
             "hero_title": "Navel Orange Browser Launcher",
             "hero_subtitle": "Desktop control panel for proxy, fingerprint and session management",
+            "legal_notice": "This open-source software is free for learning and technical exchange only. Do not use it for any illegal activities.",
             "hero_chip": "Desktop GUI",
             "lang_label": "Language",
             "group_config_editor": "Config Editor",
@@ -395,6 +397,12 @@ class DesktopLauncherWindow(QMainWindow):
         hero_right.addLayout(lang_row)
         hero_layout.addLayout(hero_right)
         main_layout.addWidget(hero_card)
+
+        self.legal_notice_label = QLabel()
+        self.legal_notice_label.setObjectName("LegalNotice")
+        self.legal_notice_label.setWordWrap(True)
+        self.legal_notice_label.setAlignment(Qt.AlignCenter)
+        main_layout.addWidget(self.legal_notice_label)
 
         self.launch_group = QGroupBox()
         self.launch_group.setObjectName("CardGroup")
@@ -587,6 +595,15 @@ class DesktopLauncherWindow(QMainWindow):
                 font-size: 13px;
                 padding-top: 2px;
             }
+            QLabel#LegalNotice {
+                color: #9a4d1f;
+                background: #fff3df;
+                border: 1px solid #efc78f;
+                border-radius: 10px;
+                padding: 8px 12px;
+                font-size: 12px;
+                font-weight: 700;
+            }
             QLabel#InfoChip {
                 color: #7b3f1d;
                 background: #fff2dc;
@@ -740,6 +757,7 @@ class DesktopLauncherWindow(QMainWindow):
 
         self.app_title_label.setText(self._t("hero_title"))
         self.app_subtitle_label.setText(self._t("hero_subtitle"))
+        self.legal_notice_label.setText(self._t("legal_notice"))
         self.info_chip_label.setText(self._t("hero_chip"))
         self.lang_hint_label.setText(self._t("lang_label"))
 
