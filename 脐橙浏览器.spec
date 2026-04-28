@@ -1,17 +1,29 @@
 # -*- mode: python ; coding: utf-8 -*-
+from pathlib import Path
+
 from PyInstaller.utils.hooks import collect_data_files
 from PyInstaller.utils.hooks import collect_submodules
 
-datas = [('D:\\XunLeiDownload\\browser\\.env.local', '.'), ('D:\\XunLeiDownload\\browser\\.env.example', '.')]
-hiddenimports = ['playwright.sync_api', 'PySide6.QtCore', 'PySide6.QtGui', 'PySide6.QtWidgets']
-datas += collect_data_files('playwright_stealth')
-hiddenimports += collect_submodules('app')
-hiddenimports += collect_submodules('playwright_stealth')
+ROOT = Path(SPECPATH).resolve()
+APP_NAME = "脐橙浏览器"
 
+datas = [(str(ROOT / ".env.example"), ".")]
+if (ROOT / ".env.local").exists():
+    datas.append((str(ROOT / ".env.local"), "."))
+
+datas += collect_data_files("playwright_stealth")
+hiddenimports = [
+    "playwright.sync_api",
+    "PySide6.QtCore",
+    "PySide6.QtGui",
+    "PySide6.QtWidgets",
+]
+hiddenimports += collect_submodules("app")
+hiddenimports += collect_submodules("playwright_stealth")
 
 a = Analysis(
-    ['D:\\XunLeiDownload\\browser\\scripts\\desktop_gui.py'],
-    pathex=['D:\\XunLeiDownload\\browser'],
+    [str(ROOT / "scripts" / "desktop_gui.py")],
+    pathex=[str(ROOT)],
     binaries=[],
     datas=datas,
     hiddenimports=hiddenimports,
@@ -29,7 +41,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name='PrivacyBrowserFramework',
+    name=APP_NAME,
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -40,7 +52,9 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon=[str(ROOT / "app" / "assets" / "favicon.ico")],
 )
+
 coll = COLLECT(
     exe,
     a.binaries,
@@ -48,5 +62,5 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name='PrivacyBrowserFramework',
+    name=APP_NAME,
 )
