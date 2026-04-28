@@ -338,6 +338,10 @@ class WorkerRuntime:
             launch_kwargs["user_agent"] = config.user_agent
         if config.viewport:
             launch_kwargs["viewport"] = dict(config.viewport)
+        else:
+            # Use native window sizing when viewport is not explicitly set.
+            # This keeps page rendering adaptive to window resize.
+            launch_kwargs["no_viewport"] = True
         if config.chrome_executable_path:
             launch_kwargs["executable_path"] = config.chrome_executable_path
         elif config.browser_channel:
