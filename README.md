@@ -1,77 +1,92 @@
-# Privacy Browser Framework
+# 脐橙浏览器
 
-多进程隐私浏览器框架（Option B supervisor 架构），支持批量启动、多 profile 并发（上限 5）、模板合并、代理复用策略、worker 隔离、快照评分链路与可视化 API/GUI。
+一个基于 Python 的桌面浏览器控制台，支持代理配置、指纹参数同步、会话批量启动与内置 Chromium 内核便携分发。
+
+## 功能概览
+
+- 多会话启动与停止管理
+- 代理配置（http/https/socks5）
+- 自动指纹参数同步（语言/时区）
+- 本地 GUI + API 服务
+- 便携版打包（PyInstaller + Chromium 内核）
+
+## 环境要求
+
+- Windows PowerShell
+- Python 3.12（推荐通过 `uv` 管理）
+- `uv`（https://docs.astral.sh/uv/）
 
 ## 快速开始
-
-1. 创建并安装环境（已在当前目录完成）：
 
 ```powershell
 uv venv .venv --python 3.12
 uv sync
-```
-
-2. 启动应用：
-
-```powershell
 uv run pbf-run
 ```
 
 默认地址：`http://127.0.0.1:8088/`
 
-## 核心能力
-
-- 批次并发上限 `5`
-- 失败条目跳过，批次继续
-- 模板优先级：`defaults -> template -> profile_overrides`
-- 代理复用策略（hybrid）：
-  - 默认禁止活跃代理复用
-  - 仅 profile `allow_proxy_reuse=true` 时允许复用
-- worker 进程隔离与心跳监控
-- 本地检测服务 `POST /detection/probe`
-- SQLite 持久化：
-  - `launch_batches`
-  - `batch_items`
-  - `profile_templates`
-  - `profiles` 扩展
-  - `runtime_processes` 扩展
-  - `audit_events`
-  - `detection_snapshots`
-
-## 代理端口配置
-
-- 默认：`127.0.0.1:7897`
-- 支持切换任意合法端口（`1..65535`）
-- Proxy 契约见 `app/core/schemas.py::ProxyConfigContract`
-- 运行时时区策略：
-  - worker 默认开启 `auto_timezone=true`
-  - 会按当前 `proxy_server` 自动探测 IP 时区并缓存
-  - 可通过 runtime 配置覆盖：
-    - `timezone_id`
-    - `auto_timezone`
-    - `timezone_probe_url`
-    - `timezone_probe_timeout_ms`
-
-## BrowserScan 验收脚本
-
-使用项目内核浏览器执行 BrowserScan 检查：
+## 新机器一键克隆环境
 
 ```powershell
-uv run python scripts/browserscan_check.py --min-score 95 --proxy-port 7897 --auto-timezone --wait-ms 15000
+powershell -ExecutionPolicy Bypass -File .\scripts\clone_env.ps1
 ```
 
-示例：切换端口验证
+仅安装运行时依赖（不含 dev 组）：
 
 ```powershell
-uv run python scripts/browserscan_check.py --proxy-port 10808 --auto-timezone --wait-ms 15000
-uv run python scripts/browserscan_check.py --proxy-scheme socks5 --proxy-port 1080 --auto-timezone --wait-ms 15000
+powershell -ExecutionPolicy Bypass -File .\scripts\clone_env.ps1 -AllGroups $false
 ```
 
-说明：BrowserScan 的最终分数与代理出口 DNS 策略强相关。浏览器侧参数会尽量抑制 DNS/WebRTC 泄漏，但不同代理软件/节点仍可能出现不同分数。
+## 便携版打包
 
-## 测试与检查
+1. 安装 Chromium 内核：
 
 ```powershell
-uv run ruff check app tests
+uv run playwright install chromium
+```
+
+2. 执行打包：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\build_portable.ps1
+```
+
+可选参数：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\build_portable.ps1 -AppName "脐橙浏览器" -OutputDir "final_exe"
+```
+
+说明：
+- 图标默认路径：`app/assets/favicon.ico`
+- 输出目录默认：`final_exe`
+
+## 项目结构
+
+```text
+app/                    # 应用主代码
+  core/                 # 核心配置与契约
+  gui/                  # Web GUI
+  services/             # 服务层
+  supervisor/           # 调度管理
+  worker/               # 浏览器执行单元
+  assets/               # 静态资源（含图标）
+scripts/                # 运行、验证、打包脚本
+```
+
+## 常用命令
+
+```powershell
 uv run pytest -q
+uv run ruff check app tests
 ```
+
+## GitHub 上传前建议
+
+- 不要提交 `.venv/`、`.playwright/`、`dist/`、`build/`、`final_exe/`
+- 保留 `pyproject.toml`、`uv.lock`、`.python-version` 用于复现环境
+
+## License
+
+暂未指定（上传仓库时请补充 `LICENSE`）。
