@@ -104,6 +104,15 @@ class CdpConnection:
     def close(self) -> None:
         self.websocket.close()
 
+    def send_command(
+        self,
+        method: str,
+        params: dict[str, Any] | None = None,
+        *,
+        session_id: str | None = None,
+    ) -> dict[str, Any]:
+        return self._send(method, params, session_id=session_id)
+
     def _send(
         self,
         method: str,
