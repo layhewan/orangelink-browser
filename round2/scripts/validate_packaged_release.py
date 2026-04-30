@@ -100,6 +100,17 @@ def release_ready(report: dict[str, Any]) -> bool:
     return True
 
 
+def health_result_to_report_entry(result: Any) -> dict[str, Any]:
+    entry = {
+        "ok": bool(result.ok),
+        "detail": str(result.detail),
+        "duration_ms": int(result.duration_ms),
+    }
+    if result.failure_class is not None:
+        entry["failure_class"] = str(result.failure_class)
+    return entry
+
+
 def load_report(path: Path) -> dict[str, Any]:
     with path.open("r", encoding="utf-8") as handle:
         report = json.load(handle)
