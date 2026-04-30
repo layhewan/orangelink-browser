@@ -1,6 +1,7 @@
 param(
     [string]$OutputDir = "final_exe_rc",
     [string]$ValidationReportPath = "",
+    [string]$VerifyProxyServer = "",
     [switch]$SkipVerification
 )
 
@@ -10,6 +11,9 @@ $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot = Split-Path -Parent $ScriptDir
 $OutputPath = Join-Path $RepoRoot $OutputDir
 $DataPath = Join-Path $OutputPath "data"
+$RuntimePath = Join-Path $OutputPath "runtime"
+$ChromiumSource = Join-Path $RepoRoot "runtime\chromium"
+$ChromiumExecutable = Join-Path $ChromiumSource "chrome.exe"
 $ReportPath = if ($ValidationReportPath) {
     $ValidationReportPath
 } else {
@@ -17,6 +21,13 @@ $ReportPath = if ($ValidationReportPath) {
 }
 
 New-Item -ItemType Directory -Force -Path $DataPath | Out-Null
+New-Item -ItemType Directory -Force -Path $RuntimePath | Out-Null
+
+if (-not (Test-Path $ChromiumExecutable)) {
+    throw "Chromium runtime not found: $ChromiumSource. Place a compatible Chromium build under runtime\chromium before packaging."
+}
+
+Copy-Item -Recurse -Force -Path $ChromiumSource -Destination $RuntimePath
 
 $RelayManifest = Join-Path $RepoRoot "relay\Cargo.toml"
 $RelayOutput = Join-Path $RepoRoot "relay\target\release\proxy-relay.exe"
@@ -28,6 +39,29 @@ if (Test-Path $RelayManifest) {
     }
     Copy-Item -Force -Path $RelayOutput -Destination $PackagedRelay
 }
+
+$ReadmePath = Join-Path $OutputPath "README_PORTABLE.txt"
+@"
+Orangelink Browser Portable Package
+
+How to run
+Start Start-脐橙浏览器.bat or 脐橙浏览器.exe from this portable folder.
+
+Data storage
+Runtime data is stored under the local data directory.
+
+Local data warning
+Portable profile data is not encrypted. Copying or losing this folder may expose local browser data.
+
+Cleanup
+Use the desktop GUI to delete saved configs and clear product-created data.
+
+Browser engine
+Bundled engine files are under runtime\chromium.
+
+Validation
+Release review requires data\packaged-gui-verification-report.json.
+"@ | Set-Content -Path $ReadmePath -Encoding UTF8
 
 if ($SkipVerification) {
     $skippedReport = [ordered]@{
