@@ -4,3 +4,4 @@ __pycache__/
 data/
 final_exe_rc/
 relay/target/
+runtime/chromium/

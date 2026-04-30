@@ -131,6 +131,16 @@ fn handle_via_upstream(
     upstream_stream.set_read_timeout(Some(Duration::from_secs(10)))?;
     upstream_stream.set_write_timeout(Some(Duration::from_secs(10)))?;
     upstream_stream.write_all(&request)?;
+
+    if is_connect_request(&request) {
+        let response = read_http_head(&mut upstream_stream)?;
+        client.write_all(&response)?;
+        if response.starts_with(b"HTTP/1.1 200") || response.starts_with(b"HTTP/1.0 200") {
+            return tunnel(client, upstream_stream);
+        }
+        return Ok(());
+    }
+
     copy_response(upstream_stream, client)
 }
 
@@ -193,6 +203,13 @@ fn write_502(stream: &mut TcpStream) -> io::Result<()> {
     stream.write_all(
         b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 20\r\nConnection: close\r\n\r\nupstream unavailable",
     )
+}
+
+fn is_connect_request(request: &[u8]) -> bool {
+    request
+        .get(..8)
+        .map(|prefix| prefix.eq_ignore_ascii_case(b"CONNECT "))
+        .unwrap_or(false)
 }
 
 fn mode_name(mode: &RelayMode) -> &'static str {

@@ -94,6 +94,54 @@ fn direct_mode_connects_directly_only_when_selected() {
     target_thread.join().unwrap();
 }
 
+#[test]
+fn proxy_mode_tunnels_connect_after_upstream_200() {
+    let upstream = TcpListener::bind("127.0.0.1:0").unwrap();
+    let upstream_port = upstream.local_addr().unwrap().port();
+    let upstream_thread = thread::spawn(move || {
+        let (mut stream, _) = upstream.accept().unwrap();
+        let mut request = Vec::new();
+        let mut byte = [0_u8; 1];
+        while !request.ends_with(b"\r\n\r\n") {
+            stream.read_exact(&mut byte).unwrap();
+            request.extend_from_slice(&byte);
+        }
+        assert!(String::from_utf8_lossy(&request).starts_with("CONNECT example.test:443"));
+        stream
+            .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+            .unwrap();
+
+        let mut payload = [0_u8; 4];
+        stream.read_exact(&mut payload).unwrap();
+        assert_eq!(&payload, b"ping");
+        stream.write_all(b"pong").unwrap();
+    });
+    let relay = spawn_relay(&[
+        "--mode",
+        "proxy",
+        "--upstream",
+        &format!("http://127.0.0.1:{upstream_port}"),
+        "--parent-pid",
+        "0",
+    ]);
+    let mut client = TcpStream::connect(("127.0.0.1", relay.port)).unwrap();
+    client
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+    client
+        .write_all(b"CONNECT example.test:443 HTTP/1.1\r\nHost: example.test:443\r\n\r\n")
+        .unwrap();
+
+    let response = read_http_head_from_stream(&mut client);
+    assert!(response.starts_with("HTTP/1.1 200 Connection Established"));
+
+    client.write_all(b"ping").unwrap();
+    let mut echoed = [0_u8; 4];
+    client.read_exact(&mut echoed).unwrap();
+    assert_eq!(&echoed, b"pong");
+    upstream_thread.join().unwrap();
+}
+
 fn spawn_relay(args: &[&str]) -> RelayProcess {
     let mut child = Command::new(env!("CARGO_BIN_EXE_proxy-relay"))
         .args(args)
@@ -127,6 +175,16 @@ fn send_raw_http(port: u16, request: &str) -> String {
     let mut response = String::new();
     stream.read_to_string(&mut response).unwrap();
     response
+}
+
+fn read_http_head_from_stream(stream: &mut TcpStream) -> String {
+    let mut response = Vec::new();
+    let mut byte = [0_u8; 1];
+    while !response.ends_with(b"\r\n\r\n") {
+        stream.read_exact(&mut byte).unwrap();
+        response.extend_from_slice(&byte);
+    }
+    String::from_utf8(response).unwrap()
 }
 
 fn unused_local_port() -> u16 {
