@@ -48,15 +48,16 @@ class ChromiumLauncher:
         config: LaunchConfig,
         session_id: str,
         start_url: str,
+        profile_dir: Path | None = None,
     ) -> ChromiumLaunchResult:
         relay = self._start_relay(config) if config.proxy_enabled else None
         cdp_port = self._port_allocator()
-        profile_dir = self.paths.profiles / session_id
-        profile_dir.mkdir(parents=True, exist_ok=True)
+        resolved_profile_dir = profile_dir or self.paths.profiles / session_id
+        resolved_profile_dir.mkdir(parents=True, exist_ok=True)
         args = build_chromium_args(
             config=config,
             chrome_executable=self.chrome_executable,
-            profile_dir=profile_dir,
+            profile_dir=resolved_profile_dir,
             remote_debugging_port=cdp_port,
             relay_port=relay.port if relay else None,
             start_url=start_url,
@@ -66,7 +67,7 @@ class ChromiumLauncher:
             process=process,
             args=args,
             cdp_port=cdp_port,
-            profile_dir=profile_dir,
+            profile_dir=resolved_profile_dir,
             relay=relay,
         )
 
