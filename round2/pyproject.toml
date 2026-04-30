@@ -1,0 +1,10 @@
+[project]
+name = "orangelink-browser-round2"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = [
+    "websockets>=16.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
