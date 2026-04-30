@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+import subprocess
+import sys
 
 
 def test_chinese_ui_strings_exist_for_every_visible_control() -> None:
@@ -42,6 +44,17 @@ def test_desktop_gui_script_is_thin_entry_point() -> None:
 
     assert "from app.desktop.main import run_desktop_gui" in script
     assert "raise SystemExit(run_desktop_gui())" in script
+
+
+def test_desktop_gui_script_runs_from_scripts_path_without_import_error() -> None:
+    result = subprocess.run(
+        [sys.executable, "scripts/desktop_gui.py"],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+
+    assert "ModuleNotFoundError" not in result.stderr
 
 
 def test_pyproject_declares_pyside_gui_dependency() -> None:

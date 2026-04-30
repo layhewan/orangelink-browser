@@ -49,3 +49,26 @@ def test_engine_metadata_contains_validation_report_fields() -> None:
     }
     assert metadata["package"]["version"] == "0.1.0"
     assert metadata["package"]["build_date"] == "2026-04-30"
+
+
+def test_read_chromium_version_falls_back_to_windows_file_version(monkeypatch) -> None:
+    import subprocess
+
+    import app.runtime.engine_version as engine_version
+
+    chrome_path = __import__("pathlib").Path(__file__).with_name("_tmp_chrome.exe")
+    chrome_path.write_text("", encoding="utf-8")
+
+    def failing_run(*args, **kwargs):
+        raise subprocess.CalledProcessError(1, args[0], stderr="chrome failed")
+
+    monkeypatch.setattr(engine_version.subprocess, "run", failing_run)
+    monkeypatch.setattr(engine_version, "_read_windows_file_version", lambda path: "123.0.6312.86")
+
+    try:
+        version = engine_version.read_chromium_version(chrome_path)
+    finally:
+        chrome_path.unlink(missing_ok=True)
+
+    assert version.family == "Chromium"
+    assert version.major == 123

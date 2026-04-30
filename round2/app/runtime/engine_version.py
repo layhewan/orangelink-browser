@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -37,13 +38,25 @@ def parse_chromium_version_output(output: str) -> BrowserEngineVersion:
 
 
 def read_chromium_version(chrome_executable: Path) -> BrowserEngineVersion:
-    result = subprocess.run(
-        [str(chrome_executable), "--version"],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    return parse_chromium_version_output(result.stdout or result.stderr)
+    try:
+        result = subprocess.run(
+            [str(chrome_executable), "--version"],
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        return parse_chromium_version_output(result.stdout or result.stderr)
+    except (OSError, subprocess.CalledProcessError, UnicodeDecodeError) as exc:
+        file_version = _read_windows_file_version(chrome_executable)
+        if file_version:
+            return BrowserEngineVersion(
+                family="Chromium",
+                major=int(file_version.split(".", 1)[0]),
+                full_version=file_version,
+            )
+        raise EngineVersionError(f"无法读取浏览器内核版本: {chrome_executable}") from exc
 
 
 def ensure_claim_compatible(
@@ -85,3 +98,59 @@ def build_engine_report_metadata(
             "build_date": package_build_date,
         },
     }
+
+
+def _read_windows_file_version(executable: Path) -> str | None:
+    if sys.platform != "win32":
+        return None
+
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        version_dll = ctypes.WinDLL("version", use_last_error=True)
+        size = version_dll.GetFileVersionInfoSizeW(str(executable), None)
+        if not size:
+            return None
+
+        buffer = ctypes.create_string_buffer(size)
+        if not version_dll.GetFileVersionInfoW(str(executable), 0, size, buffer):
+            return None
+
+        value = ctypes.c_void_p()
+        value_len = wintypes.UINT()
+        if not version_dll.VerQueryValueW(
+            buffer,
+            "\\",
+            ctypes.byref(value),
+            ctypes.byref(value_len),
+        ):
+            return None
+
+        class VS_FIXEDFILEINFO(ctypes.Structure):
+            _fields_ = [
+                ("dwSignature", wintypes.DWORD),
+                ("dwStrucVersion", wintypes.DWORD),
+                ("dwFileVersionMS", wintypes.DWORD),
+                ("dwFileVersionLS", wintypes.DWORD),
+                ("dwProductVersionMS", wintypes.DWORD),
+                ("dwProductVersionLS", wintypes.DWORD),
+                ("dwFileFlagsMask", wintypes.DWORD),
+                ("dwFileFlags", wintypes.DWORD),
+                ("dwFileOS", wintypes.DWORD),
+                ("dwFileType", wintypes.DWORD),
+                ("dwFileSubtype", wintypes.DWORD),
+                ("dwFileDateMS", wintypes.DWORD),
+                ("dwFileDateLS", wintypes.DWORD),
+            ]
+
+        fixed_info = ctypes.cast(value, ctypes.POINTER(VS_FIXEDFILEINFO)).contents
+        major = fixed_info.dwFileVersionMS >> 16
+        minor = fixed_info.dwFileVersionMS & 0xFFFF
+        build = fixed_info.dwFileVersionLS >> 16
+        patch = fixed_info.dwFileVersionLS & 0xFFFF
+        if not major:
+            return None
+        return f"{major}.{minor}.{build}.{patch}"
+    except Exception:
+        return None
