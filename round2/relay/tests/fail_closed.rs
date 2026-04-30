@@ -1,0 +1,135 @@
+use std::env;
+use std::fs;
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::{TcpListener, TcpStream};
+use std::process::{Child, Command, Stdio};
+use std::thread;
+use std::time::Duration;
+
+struct RelayProcess {
+    child: Child,
+    port: u16,
+}
+
+impl Drop for RelayProcess {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+#[test]
+fn relay_binds_loopback_ephemeral_port_and_prints_ready_line() {
+    let relay = spawn_relay(&["--mode", "direct", "--parent-pid", "0"]);
+
+    assert!(relay.port > 0);
+    assert!(TcpStream::connect(("127.0.0.1", relay.port)).is_ok());
+}
+
+#[test]
+fn source_does_not_use_windows_global_proxy_apis() {
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let source = fs::read_to_string(format!("{manifest_dir}/src/main.rs")).unwrap();
+
+    assert!(source.contains("127.0.0.1:0"));
+    for forbidden in [
+        "InternetSetOption",
+        "RegSetValue",
+        "HKEY_CURRENT_USER",
+        "WinHttpSetDefaultProxyConfiguration",
+        "ProxyEnable",
+        "ProxyServer",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "relay source must not mutate global proxy setting: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn proxy_mode_returns_502_when_upstream_is_unavailable() {
+    let upstream_port = unused_local_port();
+    let relay = spawn_relay(&[
+        "--mode",
+        "proxy",
+        "--upstream",
+        &format!("http://127.0.0.1:{upstream_port}"),
+        "--parent-pid",
+        "0",
+    ]);
+
+    let response = send_raw_http(
+        relay.port,
+        "GET http://127.0.0.1:9/check HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
+    );
+
+    assert!(response.starts_with("HTTP/1.1 502 Bad Gateway"), "{response}");
+}
+
+#[test]
+fn direct_mode_connects_directly_only_when_selected() {
+    let target = TcpListener::bind("127.0.0.1:0").unwrap();
+    let target_port = target.local_addr().unwrap().port();
+    let target_thread = thread::spawn(move || {
+        let (mut stream, _) = target.accept().unwrap();
+        let mut buffer = [0_u8; 1024];
+        let _ = stream.read(&mut buffer).unwrap();
+        stream
+            .write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Length: 7\r\nConnection: close\r\n\r\ndirect!",
+            )
+            .unwrap();
+    });
+    let relay = spawn_relay(&["--mode", "direct", "--parent-pid", "0"]);
+
+    let response = send_raw_http(
+        relay.port,
+        &format!(
+            "GET http://127.0.0.1:{target_port}/check HTTP/1.1\r\nHost: 127.0.0.1:{target_port}\r\nConnection: close\r\n\r\n"
+        ),
+    );
+
+    assert!(response.contains("direct!"), "{response}");
+    target_thread.join().unwrap();
+}
+
+fn spawn_relay(args: &[&str]) -> RelayProcess {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_proxy-relay"))
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let stdout = child.stdout.take().unwrap();
+    let mut reader = BufReader::new(stdout);
+    let mut ready_line = String::new();
+    reader.read_line(&mut ready_line).unwrap();
+
+    let port = ready_line
+        .split_whitespace()
+        .find_map(|part| part.strip_prefix("port="))
+        .and_then(|value| value.parse::<u16>().ok())
+        .unwrap_or_else(|| panic!("relay did not print ready port: {ready_line:?}"));
+
+    RelayProcess { child, port }
+}
+
+fn send_raw_http(port: u16, request: &str) -> String {
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+    stream.write_all(request.as_bytes()).unwrap();
+    stream.shutdown(std::net::Shutdown::Write).unwrap();
+
+    let mut response = String::new();
+    stream.read_to_string(&mut response).unwrap();
+    response
+}
+
+fn unused_local_port() -> u16 {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.local_addr().unwrap().port()
+}
