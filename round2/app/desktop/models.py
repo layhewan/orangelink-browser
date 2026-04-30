@@ -2,7 +2,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app.runtime.config import LaunchConfig
+from app.runtime.config import LaunchConfig, ValidationError
+
+
+@dataclass(frozen=True)
+class ConfigValidationResult:
+    ok: bool
+    config: LaunchConfig | None = None
+    error: str = ""
 
 
 @dataclass(frozen=True)
@@ -19,6 +26,12 @@ class LaunchConfigForm:
     manual_timezone: str = "UTC"
     os_fingerprint: str = "windows"
     extension_support: bool = True
+
+    def validate(self) -> ConfigValidationResult:
+        try:
+            return ConfigValidationResult(ok=True, config=self.to_launch_config())
+        except ValidationError as exc:
+            return ConfigValidationResult(ok=False, error=str(exc))
 
     def to_launch_config(self) -> LaunchConfig:
         return LaunchConfig(
