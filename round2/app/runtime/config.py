@@ -29,6 +29,7 @@ class LaunchConfig:
     manual_timezone: str = "UTC"
     os_fingerprint: str = "windows"
     extension_support: bool = True
+    proxy_reuse_allowed: bool = False
 
     def __post_init__(self) -> None:
         normalized_name = self.name.strip()

@@ -26,6 +26,7 @@ class LaunchConfigForm:
     manual_timezone: str = "UTC"
     os_fingerprint: str = "windows"
     extension_support: bool = True
+    proxy_reuse_allowed: bool = False
 
     def validate(self) -> ConfigValidationResult:
         try:
@@ -47,4 +48,5 @@ class LaunchConfigForm:
             manual_timezone=self.manual_timezone,
             os_fingerprint=self.os_fingerprint,
             extension_support=self.extension_support,
+            proxy_reuse_allowed=self.proxy_reuse_allowed,
         )
