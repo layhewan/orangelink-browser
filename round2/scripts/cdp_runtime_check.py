@@ -16,6 +16,13 @@ HEALTH_ACCEPTANCE_IDS = {
     "proxy_loss": "A13",
 }
 
+MANUAL_OBSERVATION_FIELDS = (
+    "url",
+    "title",
+    "network_failures",
+    "duration_ms",
+)
+
 
 def collect_basic_health_entries(page_probe, *, ip_url: str, google_query: str, browserscan_url: str) -> dict:
     return {
