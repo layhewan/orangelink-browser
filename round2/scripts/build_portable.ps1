@@ -18,6 +18,17 @@ $ReportPath = if ($ValidationReportPath) {
 
 New-Item -ItemType Directory -Force -Path $DataPath | Out-Null
 
+$RelayManifest = Join-Path $RepoRoot "relay\Cargo.toml"
+$RelayOutput = Join-Path $RepoRoot "relay\target\release\proxy-relay.exe"
+$PackagedRelay = Join-Path $OutputPath "proxy-relay.exe"
+if (Test-Path $RelayManifest) {
+    cargo build --release --manifest-path $RelayManifest
+    if ($LASTEXITCODE -ne 0) {
+        throw "proxy relay build failed with exit code $LASTEXITCODE."
+    }
+    Copy-Item -Force -Path $RelayOutput -Destination $PackagedRelay
+}
+
 if ($SkipVerification) {
     $skippedReport = [ordered]@{
         package = [ordered]@{
