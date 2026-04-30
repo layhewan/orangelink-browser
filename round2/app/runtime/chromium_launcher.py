@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from app.runtime.config import LaunchConfig, PortablePaths
+from app.runtime.config import DEFAULT_START_PAGE, LaunchConfig, PortablePaths
 from app.runtime.proxy_contract import ProxyMode
 
 
@@ -108,6 +108,7 @@ def build_chromium_args(
     remote_debugging_port: int,
     relay_port: int | None,
     start_url: str | None = None,
+    homepage_file: Path | None = None,
 ) -> list[str]:
     if config.proxy_enabled and relay_port is None:
         raise ValueError("proxy relay port is required for proxy-enabled sessions")
@@ -130,8 +131,14 @@ def build_chromium_args(
     if config.proxy_enabled:
         args.append(f"--proxy-server=http://127.0.0.1:{relay_port}")
 
-    args.append(start_url or config.start_page)
+    args.append(_resolve_start_url(start_url or config.start_page, homepage_file))
     return args
+
+
+def _resolve_start_url(start_url: str, homepage_file: Path | None) -> str:
+    if start_url == DEFAULT_START_PAGE and homepage_file is not None:
+        return homepage_file.resolve().as_uri()
+    return start_url
 
 
 def _parse_ready_port(ready_line: str) -> int:

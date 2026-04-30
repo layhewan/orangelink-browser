@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Orangelink Session {{SESSION_ID}}</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      font-family: "Segoe UI", Arial, sans-serif;
+      background: #f7f8fa;
+      color: #1f2933;
+    }
+    body {
+      margin: 0;
+      min-height: 100vh;
+    }
+    main {
+      box-sizing: border-box;
+      min-height: 100vh;
+      padding: 24px;
+    }
+    header {
+      margin-block-end: 24px;
+    }
+    h1 {
+      margin: 0 0 8px;
+      font-size: 28px;
+      line-height: 1.2;
+    }
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+    }
+    .metric {
+      border: 1px solid #d7dde5;
+      border-radius: 8px;
+      padding: 14px;
+      background: #ffffff;
+      min-width: 0;
+    }
+    .metric h2 {
+      margin: 0 0 8px;
+      font-size: 13px;
+      line-height: 1.2;
+      color: #52606d;
+    }
+    .metric p {
+      margin: 0;
+      font-size: 15px;
+      line-height: 1.5;
+      overflow-wrap: anywhere;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        background: #111827;
+        color: #e5e7eb;
+      }
+      .metric {
+        background: #1f2937;
+        border-color: #374151;
+      }
+      .metric h2 {
+        color: #cbd5e1;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Orangelink Session {{SESSION_ID}}</h1>
+      <p><strong>{{PUBLIC_IP_VALUE}}</strong></p>
+      <p>{{PUBLIC_IP_DETAIL}}</p>
+    </header>
+    <div class="summary">
+      {{ENVIRONMENT_ROWS}}
+    </div>
+  </main>
+</body>
+</html>
