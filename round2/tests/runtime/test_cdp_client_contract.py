@@ -45,6 +45,37 @@ def test_cdp_connection_sends_expected_commands_with_session_id() -> None:
     assert second["params"]["url"] == "https://example.test/"
 
 
+def test_cdp_connection_can_receive_target_events() -> None:
+    from app.runtime.cdp_client import CdpConnection
+
+    websocket = FakeWebSocket(
+        [
+            {
+                "method": "Target.attachedToTarget",
+                "params": {"sessionId": "session-2"},
+            }
+        ]
+    )
+    connection = CdpConnection(websocket)
+
+    assert connection.recv_message()["method"] == "Target.attachedToTarget"
+
+
+def test_cdp_connection_preserves_events_seen_while_waiting_for_command_response() -> None:
+    from app.runtime.cdp_client import CdpConnection
+
+    event = {
+        "method": "Target.attachedToTarget",
+        "params": {"sessionId": "session-2"},
+    }
+    websocket = FakeWebSocket([event, {"id": 1, "result": {}}])
+    connection = CdpConnection(websocket)
+
+    connection.send_command("Target.setAutoAttach", {})
+
+    assert connection.recv_message() == event
+
+
 def test_cdp_client_does_not_depend_on_external_websocket_package() -> None:
     source = Path("app/runtime/cdp_client.py").read_text(encoding="utf-8")
 

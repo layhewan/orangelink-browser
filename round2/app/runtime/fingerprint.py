@@ -49,13 +49,15 @@ def build_fingerprint_profile(
     claimed_major: int | None = None,
 ) -> FingerprintProfile:
     geo_cache = proxy_geo_cache or {}
+    cached_language = config.cached_language if config.proxy_enabled else ""
+    cached_timezone = config.cached_timezone if config.proxy_enabled else ""
     language = (
-        geo_cache.get("language") or config.cached_language
+        geo_cache.get("language") or cached_language
         if config.automatic_language
         else config.manual_language
     ) or config.manual_language
     timezone = (
-        geo_cache.get("timezone") or config.cached_timezone
+        geo_cache.get("timezone") or cached_timezone
         if config.automatic_timezone
         else config.manual_timezone
     ) or config.manual_timezone

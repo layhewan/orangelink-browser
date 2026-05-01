@@ -66,6 +66,7 @@ class CdpConnection:
     def __init__(self, websocket: Any) -> None:
         self.websocket = websocket
         self._next_id = 0
+        self._pending_messages: list[dict[str, Any]] = []
 
     def list_targets(self) -> list[CdpTarget]:
         result = self._send("Target.getTargets")
@@ -107,6 +108,16 @@ class CdpConnection:
     def close(self) -> None:
         self.websocket.close()
 
+    def recv_message(self) -> dict[str, Any]:
+        if self._pending_messages:
+            return self._pending_messages.pop(0)
+        return self._read_next_message()
+
+    def set_timeout(self, timeout_s: float) -> None:
+        set_timeout = getattr(self.websocket, "set_timeout", None)
+        if callable(set_timeout):
+            set_timeout(timeout_s)
+
     def send_command(
         self,
         method: str,
@@ -136,12 +147,16 @@ class CdpConnection:
         self.websocket.send(json.dumps(message))
 
         while True:
-            response = json.loads(self.websocket.recv())
+            response = self._read_next_message()
             if response.get("id") != message["id"]:
+                self._pending_messages.append(response)
                 continue
             if "error" in response:
                 raise CdpError(str(response["error"]))
             return response.get("result", {})
+
+    def _read_next_message(self) -> dict[str, Any]:
+        return json.loads(self.websocket.recv())
 
 
 class _StdlibWebSocket:
@@ -185,6 +200,9 @@ class _StdlibWebSocket:
             self.sock.sendall(bytes([0x88, 0x80]) + os.urandom(4))
         finally:
             self.sock.close()
+
+    def set_timeout(self, timeout_s: float) -> None:
+        self.sock.settimeout(timeout_s)
 
 
 def _connect_websocket(websocket_url: str) -> _StdlibWebSocket:

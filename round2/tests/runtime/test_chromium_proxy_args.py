@@ -63,3 +63,41 @@ def test_extension_support_can_be_disabled() -> None:
     )
 
     assert "--disable-extensions" in args
+
+
+def test_chromium_launch_sets_process_language_from_cached_proxy_language() -> None:
+    from app.runtime.chromium_launcher import build_chromium_args
+    from app.runtime.config import LaunchConfig
+
+    args = build_chromium_args(
+        config=LaunchConfig(name="US Proxy", cached_language="en-US"),
+        chrome_executable=Path("runtime/chromium/chrome.exe"),
+        profile_dir=Path("data/profiles/session-1"),
+        remote_debugging_port=9222,
+        relay_port=None,
+        start_url="https://example.test/",
+    )
+
+    assert "--lang=en-US" in args
+
+
+def test_direct_launch_ignores_stale_cached_proxy_language() -> None:
+    from app.runtime.chromium_launcher import build_chromium_args
+    from app.runtime.config import LaunchConfig
+
+    args = build_chromium_args(
+        config=LaunchConfig(
+            name="Direct",
+            proxy_enabled=False,
+            manual_language="en-US",
+            cached_language="zh-CN",
+        ),
+        chrome_executable=Path("runtime/chromium/chrome.exe"),
+        profile_dir=Path("data/profiles/session-1"),
+        remote_debugging_port=9222,
+        relay_port=None,
+        start_url="https://example.test/",
+    )
+
+    assert "--lang=en-US" in args
+    assert "--lang=zh-CN" not in args
