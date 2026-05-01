@@ -2,6 +2,8 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 data/
+build/
 final_exe_rc/
+final_exe_rc*/
 relay/target/
 runtime/chromium/

@@ -27,6 +27,8 @@ class LaunchConfig:
     manual_language: str = "en-US"
     automatic_timezone: bool = True
     manual_timezone: str = "UTC"
+    cached_language: str = ""
+    cached_timezone: str = ""
     os_fingerprint: str = "windows"
     extension_support: bool = True
     proxy_reuse_allowed: bool = False

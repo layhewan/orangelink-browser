@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import json
+import base64
+import os
+import socket
+import struct
 import time
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlparse
 from urllib.request import urlopen
 
 
@@ -54,9 +59,7 @@ def wait_for_version(port: int, timeout_s: float) -> CdpVersion:
 
 
 def connect_browser(websocket_url: str) -> "CdpConnection":
-    from websockets.sync.client import connect
-
-    return CdpConnection(connect(websocket_url))
+    return CdpConnection(_connect_websocket(websocket_url))
 
 
 class CdpConnection:
@@ -139,3 +142,94 @@ class CdpConnection:
             if "error" in response:
                 raise CdpError(str(response["error"]))
             return response.get("result", {})
+
+
+class _StdlibWebSocket:
+    def __init__(self, sock: socket.socket) -> None:
+        self.sock = sock
+
+    def send(self, payload: str) -> None:
+        data = payload.encode("utf-8")
+        header = bytearray([0x81])
+        if len(data) < 126:
+            header.append(0x80 | len(data))
+        elif len(data) < 65536:
+            header.append(0x80 | 126)
+            header.extend(struct.pack("!H", len(data)))
+        else:
+            header.append(0x80 | 127)
+            header.extend(struct.pack("!Q", len(data)))
+        mask = os.urandom(4)
+        masked = bytes(byte ^ mask[index % 4] for index, byte in enumerate(data))
+        self.sock.sendall(bytes(header) + mask + masked)
+
+    def recv(self) -> str:
+        first = _recv_exact(self.sock, 2)
+        if len(first) < 2:
+            raise CdpError("CDP websocket closed")
+        opcode = first[0] & 0x0F
+        length = first[1] & 0x7F
+        if length == 126:
+            length = struct.unpack("!H", _recv_exact(self.sock, 2))[0]
+        elif length == 127:
+            length = struct.unpack("!Q", _recv_exact(self.sock, 8))[0]
+        payload = _recv_exact(self.sock, length)
+        if opcode == 0x08:
+            raise CdpError("CDP websocket closed")
+        if opcode != 0x01:
+            return self.recv()
+        return payload.decode("utf-8")
+
+    def close(self) -> None:
+        try:
+            self.sock.sendall(bytes([0x88, 0x80]) + os.urandom(4))
+        finally:
+            self.sock.close()
+
+
+def _connect_websocket(websocket_url: str) -> _StdlibWebSocket:
+    parsed = urlparse(websocket_url)
+    if parsed.scheme != "ws":
+        raise ValueError(f"only ws:// CDP URLs are supported: {websocket_url}")
+    host = parsed.hostname or "127.0.0.1"
+    port = parsed.port or 80
+    path = parsed.path or "/"
+    if parsed.query:
+        path += f"?{parsed.query}"
+
+    sock = socket.create_connection((host, port), timeout=5)
+    key = base64.b64encode(os.urandom(16)).decode("ascii")
+    request = (
+        f"GET {path} HTTP/1.1\r\n"
+        f"Host: {host}:{port}\r\n"
+        "Upgrade: websocket\r\n"
+        "Connection: Upgrade\r\n"
+        f"Sec-WebSocket-Key: {key}\r\n"
+        "Sec-WebSocket-Version: 13\r\n\r\n"
+    )
+    sock.sendall(request.encode("ascii"))
+    response = _read_http_head(sock)
+    if not response.startswith(b"HTTP/1.1 101") and not response.startswith(b"HTTP/1.0 101"):
+        sock.close()
+        raise CdpError(f"CDP websocket handshake failed: {response[:80]!r}")
+    return _StdlibWebSocket(sock)
+
+
+def _read_http_head(sock: socket.socket) -> bytes:
+    data = bytearray()
+    while not data.endswith(b"\r\n\r\n"):
+        chunk = sock.recv(1)
+        if not chunk:
+            break
+        data.extend(chunk)
+    return bytes(data)
+
+
+def _recv_exact(sock: socket.socket, size: int) -> bytes:
+    data = bytearray()
+    while len(data) < size:
+        chunk = sock.recv(size - len(data))
+        if not chunk:
+            break
+        data.extend(chunk)
+    return bytes(data)

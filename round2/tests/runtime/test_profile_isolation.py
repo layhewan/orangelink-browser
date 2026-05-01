@@ -62,6 +62,28 @@ def test_saved_config_profile_survives_session_stop() -> None:
     assert profile_dir.exists()
 
 
+def test_saved_config_cannot_launch_twice_at_same_time() -> None:
+    from app.runtime.config import LaunchConfig
+
+    manager, launcher, profile_manager = _manager()
+
+    first = manager.launch(
+        LaunchConfig(name="Saved A"),
+        start_url="https://example.test/",
+        saved_config_id="42",
+    )
+    second = manager.launch(
+        LaunchConfig(name="Saved A"),
+        start_url="https://example.test/",
+        saved_config_id="42",
+    )
+
+    assert first.status == "running"
+    assert second.status == "failed"
+    assert second.failure_reason == "该配置已在运行中"
+    assert launcher.profile_dirs == [profile_manager.paths.profiles / "cfg-42"]
+
+
 def test_cleanup_only_removes_profiles_with_matching_owner_marker() -> None:
     from app.runtime.profiles import ProfileManager
 
@@ -70,6 +92,43 @@ def test_cleanup_only_removes_profiles_with_matching_owner_marker() -> None:
     (profile.path / "owner.json").write_text("{}", encoding="utf-8")
 
     assert profile_manager.cleanup_owned_profile("saved_config", "42") is False
+    assert profile.path.exists()
+
+
+def test_cleanup_retries_when_windows_temporarily_locks_profile(monkeypatch) -> None:
+    from app.runtime.profiles import ProfileManager
+
+    profile_manager = ProfileManager(_paths(), remove_retries=1, remove_delay_s=0)
+    profile = profile_manager.temporary_profile("locked")
+    calls = 0
+    real_rmtree = shutil.rmtree
+
+    def flaky_rmtree(path: Path) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise PermissionError("profile file is still closing")
+        real_rmtree(path)
+
+    monkeypatch.setattr("app.runtime.profiles.shutil.rmtree", flaky_rmtree)
+
+    assert profile_manager.cleanup_temporary(profile) is True
+    assert calls == 2
+    assert not profile.path.exists()
+
+
+def test_cleanup_returns_false_instead_of_raising_when_profile_stays_locked(monkeypatch) -> None:
+    from app.runtime.profiles import ProfileManager
+
+    profile_manager = ProfileManager(_paths(), remove_retries=1, remove_delay_s=0)
+    profile = profile_manager.temporary_profile("still-locked")
+
+    def locked_rmtree(path: Path) -> None:
+        raise PermissionError("profile file is still closing")
+
+    monkeypatch.setattr("app.runtime.profiles.shutil.rmtree", locked_rmtree)
+
+    assert profile_manager.cleanup_temporary(profile) is False
     assert profile.path.exists()
 
 

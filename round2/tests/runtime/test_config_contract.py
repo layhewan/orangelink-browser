@@ -88,6 +88,21 @@ def test_launch_config_accepts_manual_language_forms() -> None:
     ).manual_language == "zh-CN"
 
 
+@pytest.mark.parametrize("protocol", ["http", "https", "socks5"])
+def test_launch_config_accepts_supported_proxy_protocols(protocol: str) -> None:
+    from app.runtime.config import LaunchConfig
+
+    config = LaunchConfig(
+        name="Proxy",
+        proxy_enabled=True,
+        proxy_protocol=protocol,
+        proxy_host="127.0.0.1",
+        proxy_port=7897,
+    )
+
+    assert config.proxy_protocol == protocol
+
+
 def test_portable_paths_are_created_under_base_data() -> None:
     from app.runtime.config import resolve_portable_paths
 

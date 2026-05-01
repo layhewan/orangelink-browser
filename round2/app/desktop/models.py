@@ -24,6 +24,8 @@ class LaunchConfigForm:
     manual_language: str = "en-US"
     automatic_timezone: bool = True
     manual_timezone: str = "UTC"
+    cached_language: str = ""
+    cached_timezone: str = ""
     os_fingerprint: str = "windows"
     extension_support: bool = True
     proxy_reuse_allowed: bool = False
@@ -46,6 +48,8 @@ class LaunchConfigForm:
             manual_language=self.manual_language,
             automatic_timezone=self.automatic_timezone,
             manual_timezone=self.manual_timezone,
+            cached_language=self.cached_language,
+            cached_timezone=self.cached_timezone,
             os_fingerprint=self.os_fingerprint,
             extension_support=self.extension_support,
             proxy_reuse_allowed=self.proxy_reuse_allowed,

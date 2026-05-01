@@ -47,16 +47,12 @@ def read_chromium_version(chrome_executable: Path) -> BrowserEngineVersion:
             encoding="utf-8",
             errors="replace",
         )
-        return parse_chromium_version_output(result.stdout or result.stderr)
+        try:
+            return parse_chromium_version_output(result.stdout or result.stderr)
+        except EngineVersionError as exc:
+            return _read_chromium_file_version_or_raise(chrome_executable, exc)
     except (OSError, subprocess.CalledProcessError, UnicodeDecodeError) as exc:
-        file_version = _read_windows_file_version(chrome_executable)
-        if file_version:
-            return BrowserEngineVersion(
-                family="Chromium",
-                major=int(file_version.split(".", 1)[0]),
-                full_version=file_version,
-            )
-        raise EngineVersionError(f"无法读取浏览器内核版本: {chrome_executable}") from exc
+        return _read_chromium_file_version_or_raise(chrome_executable, exc)
 
 
 def ensure_claim_compatible(
@@ -98,6 +94,20 @@ def build_engine_report_metadata(
             "build_date": package_build_date,
         },
     }
+
+
+def _read_chromium_file_version_or_raise(
+    chrome_executable: Path,
+    exc: Exception,
+) -> BrowserEngineVersion:
+    file_version = _read_windows_file_version(chrome_executable)
+    if file_version:
+        return BrowserEngineVersion(
+            family="Chromium",
+            major=int(file_version.split(".", 1)[0]),
+            full_version=file_version,
+        )
+    raise EngineVersionError(f"无法读取浏览器内核版本: {chrome_executable}") from exc
 
 
 def _read_windows_file_version(executable: Path) -> str | None:

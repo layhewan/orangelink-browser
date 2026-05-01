@@ -14,6 +14,7 @@ class SessionState:
     session_id: str
     config: LaunchConfig
     status: str
+    saved_config_id: str | None = None
     launch_result: ChromiumLaunchResult | None = None
     failure_reason: str | None = None
     profile: ProfileHandle | None = None
@@ -46,15 +47,25 @@ class SessionManager:
         saved_config_id: str | None = None,
     ) -> SessionState:
         session_id = self._allocate_session_id()
-        rejection = self._launch_rejection_reason(config)
+        rejection = self._launch_rejection_reason(config, saved_config_id=saved_config_id)
         if rejection is not None:
-            session = SessionState(session_id=session_id, config=config, status="failed")
+            session = SessionState(
+                session_id=session_id,
+                config=config,
+                status="failed",
+                saved_config_id=saved_config_id,
+            )
             self.sessions[session_id] = session
             session.status = "failed"
             session.failure_reason = rejection
             return session
 
-        session = SessionState(session_id=session_id, config=config, status="launching")
+        session = SessionState(
+            session_id=session_id,
+            config=config,
+            status="launching",
+            saved_config_id=saved_config_id,
+        )
         self.sessions[session_id] = session
 
         try:
@@ -118,9 +129,17 @@ class SessionManager:
         self._next_session_number += 1
         return session_id
 
-    def _launch_rejection_reason(self, config: LaunchConfig) -> str | None:
+    def _launch_rejection_reason(
+        self,
+        config: LaunchConfig,
+        *,
+        saved_config_id: str | None,
+    ) -> str | None:
         if self._active_session_count() >= self.max_sessions:
             return f"最多只能同时运行 {self.max_sessions} 个会话"
+
+        if saved_config_id is not None and saved_config_id in self._active_saved_config_ids():
+            return "该配置已在运行中"
 
         if config.proxy_enabled and not config.proxy_reuse_allowed:
             proxy_key = ProxyMode.from_config(config).reuse_key
@@ -128,6 +147,14 @@ class SessionManager:
                 return "同一代理已被运行中的会话使用"
 
         return None
+
+    def _active_saved_config_ids(self) -> set[str]:
+        return {
+            session.saved_config_id
+            for session in self.sessions.values()
+            if session.saved_config_id is not None
+            and session.status in {"launching", "running"}
+        }
 
     def _active_session_count(self) -> int:
         return sum(

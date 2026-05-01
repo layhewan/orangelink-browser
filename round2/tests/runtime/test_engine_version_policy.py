@@ -72,3 +72,28 @@ def test_read_chromium_version_falls_back_to_windows_file_version(monkeypatch) -
 
     assert version.family == "Chromium"
     assert version.major == 123
+
+
+def test_read_chromium_version_falls_back_when_cli_output_is_unparseable(monkeypatch) -> None:
+    import subprocess
+
+    import app.runtime.engine_version as engine_version
+
+    class Completed:
+        stdout = "��������������������"
+        stderr = ""
+
+    chrome_path = __import__("pathlib").Path(__file__).with_name("_tmp_chrome.exe")
+    chrome_path.write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(engine_version.subprocess, "run", lambda *args, **kwargs: Completed())
+    monkeypatch.setattr(engine_version, "_read_windows_file_version", lambda path: "145.0.7632.6")
+
+    try:
+        version = engine_version.read_chromium_version(chrome_path)
+    finally:
+        chrome_path.unlink(missing_ok=True)
+
+    assert version.family == "Chromium"
+    assert version.major == 145
+    assert version.full_version == "145.0.7632.6"

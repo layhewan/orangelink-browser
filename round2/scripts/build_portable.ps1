@@ -12,6 +12,7 @@ $RepoRoot = Split-Path -Parent $ScriptDir
 $OutputPath = Join-Path $RepoRoot $OutputDir
 $DataPath = Join-Path $OutputPath "data"
 $RuntimePath = Join-Path $OutputPath "runtime"
+$AppDisplayName = -join ([char[]](0x8110, 0x6A59, 0x6D4F, 0x89C8, 0x5668))
 $ChromiumSource = Join-Path $RepoRoot "runtime\chromium"
 $ChromiumExecutable = Join-Path $ChromiumSource "chrome.exe"
 $ReportPath = if ($ValidationReportPath) {
@@ -22,6 +23,9 @@ $ReportPath = if ($ValidationReportPath) {
 
 New-Item -ItemType Directory -Force -Path $DataPath | Out-Null
 New-Item -ItemType Directory -Force -Path $RuntimePath | Out-Null
+Remove-Item -Recurse -Force -LiteralPath (Join-Path $OutputPath "_internal") -ErrorAction SilentlyContinue
+Remove-Item -Force -LiteralPath (Join-Path $OutputPath "orangelink-browser.exe") -ErrorAction SilentlyContinue
+Remove-Item -Force -LiteralPath (Join-Path $OutputPath "$AppDisplayName.exe") -ErrorAction SilentlyContinue
 
 if (-not (Test-Path $ChromiumExecutable)) {
     throw "Chromium runtime not found: $ChromiumSource. Place a compatible Chromium build under runtime\chromium before packaging."
@@ -40,12 +44,61 @@ if (Test-Path $RelayManifest) {
     Copy-Item -Force -Path $RelayOutput -Destination $PackagedRelay
 }
 
+$DesktopEntry = Join-Path $RepoRoot "scripts\desktop_gui.py"
+$IconPath = Join-Path $RepoRoot "app\assets\favicon.ico"
+$PyInstallerWorkPath = Join-Path $RepoRoot "build\pyinstaller"
+$PyInstallerSpecPath = Join-Path $RepoRoot "build\pyinstaller-spec"
+$PyInstallerDistPath = Join-Path $RepoRoot "build\pyinstaller-dist"
+$PyInstallerAppPath = Join-Path $PyInstallerDistPath "orangelink-browser"
+$PyInstallerExePath = Join-Path $OutputPath "orangelink-browser.exe"
+$GuiExePath = Join-Path $OutputPath "$AppDisplayName.exe"
+$LauncherBatPath = Join-Path $OutputPath "Start-$AppDisplayName.bat"
+
+python -c "import PyInstaller" 2>$null
+if ($LASTEXITCODE -ne 0) {
+    throw "PyInstaller is not installed. Run: python -m pip install pyinstaller"
+}
+
+python -m PyInstaller `
+    --noconfirm `
+    --clean `
+    --onedir `
+    --windowed `
+    --icon $IconPath `
+    --name orangelink-browser `
+    --contents-directory _internal `
+    --distpath $PyInstallerDistPath `
+    --workpath $PyInstallerWorkPath `
+    --specpath $PyInstallerSpecPath `
+    $DesktopEntry
+if ($LASTEXITCODE -ne 0) {
+    throw "PyInstaller GUI build failed with exit code $LASTEXITCODE."
+}
+if (-not (Test-Path $PyInstallerAppPath)) {
+    throw "PyInstaller did not produce expected app directory: $PyInstallerAppPath"
+}
+Copy-Item -Recurse -Force -Path (Join-Path $PyInstallerAppPath "*") -Destination $OutputPath
+if (-not (Test-Path $PyInstallerExePath)) {
+    throw "PyInstaller did not produce expected executable: $PyInstallerExePath"
+}
+Move-Item -Force -Path $PyInstallerExePath -Destination $GuiExePath
+if (-not (Test-Path $GuiExePath)) {
+    throw "PyInstaller did not produce expected executable: $GuiExePath"
+}
+
+@'
+@echo off
+setlocal
+cd /d "%~dp0"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$n=-join([char[]](0x8110,0x6A59,0x6D4F,0x89C8,0x5668)); Start-Process -FilePath (Join-Path '%~dp0' ($n + '.exe'))"
+'@ | Set-Content -Path $LauncherBatPath -Encoding ASCII
+
 $ReadmePath = Join-Path $OutputPath "README_PORTABLE.txt"
 @"
 Orangelink Browser Portable Package
 
 How to run
-Start Start-脐橙浏览器.bat or 脐橙浏览器.exe from this portable folder.
+Start Start-$AppDisplayName.bat or $AppDisplayName.exe from this portable folder.
 
 Data storage
 Runtime data is stored under the local data directory.

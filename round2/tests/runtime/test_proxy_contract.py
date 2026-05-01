@@ -16,8 +16,8 @@ def test_proxy_mode_returns_none_for_direct_sessions() -> None:
     ("protocol", "expected"),
     [
         ("http", "http://127.0.0.1:7890"),
-        ("https", "https://proxy.example:443"),
-        ("socks5", "socks5://10.0.0.5:1080"),
+        ("https", "https://127.0.0.1:7897"),
+        ("socks5", "socks5://127.0.0.1:10808"),
     ],
 )
 def test_proxy_mode_formats_enabled_proxy_url(protocol: str, expected: str) -> None:

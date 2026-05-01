@@ -64,7 +64,10 @@ fn proxy_mode_returns_502_when_upstream_is_unavailable() {
         "GET http://127.0.0.1:9/check HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
     );
 
-    assert!(response.starts_with("HTTP/1.1 502 Bad Gateway"), "{response}");
+    assert!(
+        response.starts_with("HTTP/1.1 502 Bad Gateway"),
+        "{response}"
+    );
 }
 
 #[test]
@@ -76,9 +79,7 @@ fn direct_mode_connects_directly_only_when_selected() {
         let mut buffer = [0_u8; 1024];
         let _ = stream.read(&mut buffer).unwrap();
         stream
-            .write_all(
-                b"HTTP/1.1 200 OK\r\nContent-Length: 7\r\nConnection: close\r\n\r\ndirect!",
-            )
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 7\r\nConnection: close\r\n\r\ndirect!")
             .unwrap();
     });
     let relay = spawn_relay(&["--mode", "direct", "--parent-pid", "0"]);
@@ -134,6 +135,158 @@ fn proxy_mode_tunnels_connect_after_upstream_200() {
 
     let response = read_http_head_from_stream(&mut client);
     assert!(response.starts_with("HTTP/1.1 200 Connection Established"));
+
+    client.write_all(b"ping").unwrap();
+    let mut echoed = [0_u8; 4];
+    client.read_exact(&mut echoed).unwrap();
+    assert_eq!(&echoed, b"pong");
+    upstream_thread.join().unwrap();
+}
+
+#[test]
+fn proxy_mode_treats_https_upstream_as_http_connect_proxy() {
+    let upstream = TcpListener::bind("127.0.0.1:0").unwrap();
+    let upstream_port = upstream.local_addr().unwrap().port();
+    let upstream_thread = thread::spawn(move || {
+        let (mut stream, _) = upstream.accept().unwrap();
+        let mut request = Vec::new();
+        let mut byte = [0_u8; 1];
+        while !request.ends_with(b"\r\n\r\n") {
+            stream.read_exact(&mut byte).unwrap();
+            request.extend_from_slice(&byte);
+        }
+        assert!(String::from_utf8_lossy(&request).starts_with("CONNECT example.test:443"));
+        stream
+            .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+            .unwrap();
+
+        let mut payload = [0_u8; 4];
+        stream.read_exact(&mut payload).unwrap();
+        assert_eq!(&payload, b"ping");
+        stream.write_all(b"pong").unwrap();
+    });
+    let relay = spawn_relay(&[
+        "--mode",
+        "proxy",
+        "--upstream",
+        &format!("https://127.0.0.1:{upstream_port}"),
+        "--parent-pid",
+        "0",
+    ]);
+    let mut client = TcpStream::connect(("127.0.0.1", relay.port)).unwrap();
+    client
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+    client
+        .write_all(b"CONNECT example.test:443 HTTP/1.1\r\nHost: example.test:443\r\n\r\n")
+        .unwrap();
+
+    let response = read_http_head_from_stream(&mut client);
+    assert!(response.starts_with("HTTP/1.1 200 Connection Established"));
+
+    client.write_all(b"ping").unwrap();
+    let mut echoed = [0_u8; 4];
+    client.read_exact(&mut echoed).unwrap();
+    assert_eq!(&echoed, b"pong");
+    upstream_thread.join().unwrap();
+}
+
+#[test]
+fn proxy_mode_tunnels_connect_through_socks5_upstream() {
+    let upstream = TcpListener::bind("127.0.0.1:0").unwrap();
+    let upstream_port = upstream.local_addr().unwrap().port();
+    let upstream_thread = thread::spawn(move || {
+        let (mut stream, _) = upstream.accept().unwrap();
+        let mut greeting = [0_u8; 3];
+        stream.read_exact(&mut greeting).unwrap();
+        assert_eq!(greeting, [0x05, 0x01, 0x00]);
+        stream.write_all(&[0x05, 0x00]).unwrap();
+
+        let mut head = [0_u8; 5];
+        stream.read_exact(&mut head).unwrap();
+        assert_eq!(&head[..4], &[0x05, 0x01, 0x00, 0x03]);
+        let domain_len = head[4] as usize;
+        let mut domain = vec![0_u8; domain_len];
+        stream.read_exact(&mut domain).unwrap();
+        let mut port = [0_u8; 2];
+        stream.read_exact(&mut port).unwrap();
+        assert_eq!(String::from_utf8(domain).unwrap(), "example.test");
+        assert_eq!(u16::from_be_bytes(port), 443);
+        stream
+            .write_all(&[0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0])
+            .unwrap();
+
+        let mut payload = [0_u8; 4];
+        stream.read_exact(&mut payload).unwrap();
+        assert_eq!(&payload, b"ping");
+        stream.write_all(b"pong").unwrap();
+    });
+    let relay = spawn_relay(&[
+        "--mode",
+        "proxy",
+        "--upstream",
+        &format!("socks5://127.0.0.1:{upstream_port}"),
+        "--parent-pid",
+        "0",
+    ]);
+    let mut client = TcpStream::connect(("127.0.0.1", relay.port)).unwrap();
+    client
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+    client
+        .write_all(b"CONNECT example.test:443 HTTP/1.1\r\nHost: example.test:443\r\n\r\n")
+        .unwrap();
+
+    let response = read_http_head_from_stream(&mut client);
+    assert!(response.starts_with("HTTP/1.1 200 Connection Established"));
+
+    client.write_all(b"ping").unwrap();
+    let mut echoed = [0_u8; 4];
+    client.read_exact(&mut echoed).unwrap();
+    assert_eq!(&echoed, b"pong");
+    upstream_thread.join().unwrap();
+}
+
+#[test]
+fn proxy_mode_keeps_connect_tunnel_open_after_idle_period() {
+    let upstream = TcpListener::bind("127.0.0.1:0").unwrap();
+    let upstream_port = upstream.local_addr().unwrap().port();
+    let upstream_thread = thread::spawn(move || {
+        let (mut stream, _) = upstream.accept().unwrap();
+        let mut request = Vec::new();
+        let mut byte = [0_u8; 1];
+        while !request.ends_with(b"\r\n\r\n") {
+            stream.read_exact(&mut byte).unwrap();
+            request.extend_from_slice(&byte);
+        }
+        stream
+            .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+            .unwrap();
+
+        let mut payload = [0_u8; 4];
+        stream.read_exact(&mut payload).unwrap();
+        assert_eq!(&payload, b"ping");
+        stream.write_all(b"pong").unwrap();
+    });
+    let relay = spawn_relay(&[
+        "--mode",
+        "proxy",
+        "--upstream",
+        &format!("http://127.0.0.1:{upstream_port}"),
+        "--parent-pid",
+        "0",
+    ]);
+    let mut client = TcpStream::connect(("127.0.0.1", relay.port)).unwrap();
+    client
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+    client
+        .write_all(b"CONNECT example.test:443 HTTP/1.1\r\nHost: example.test:443\r\n\r\n")
+        .unwrap();
+    let response = read_http_head_from_stream(&mut client);
+    assert!(response.starts_with("HTTP/1.1 200 Connection Established"));
+
+    thread::sleep(Duration::from_secs(11));
 
     client.write_all(b"ping").unwrap();
     let mut echoed = [0_u8; 4];
