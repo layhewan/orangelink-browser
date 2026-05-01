@@ -134,6 +134,56 @@ def test_gui_exposes_recommended_proxy_protocols_and_ports() -> None:
     app.quit()
 
 
+def test_gui_lists_saved_environments_with_proxy_and_fingerprint_summary() -> None:
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication, QListWidget, QLabel
+
+    from app.desktop.state_store import StateStore
+    from app.desktop.window import create_main_window
+    from app.runtime.config import LaunchConfig
+
+    app = QApplication.instance() or QApplication([])
+    store = StateStore(_desktop_paths())
+    store.save_config(
+        LaunchConfig(
+            name="美国环境",
+            proxy_enabled=True,
+            proxy_protocol="socks5",
+            proxy_host="127.0.0.1",
+            proxy_port=10808,
+            cached_language="en-US",
+            cached_timezone="America/Los_Angeles",
+        )
+    )
+
+    window = create_main_window(
+        launch_handler=lambda **kwargs: object(),
+        state_store=store,
+        geo_probe=lambda _: None,
+    )
+    config_list = window.findChild(QListWidget, "saved_configurations")
+    environment_count = window.findChild(QLabel, "environment_count")
+
+    assert config_list.item(0).text() == (
+        "美国环境\n"
+        "socks5://127.0.0.1:10808 · en-US · America/Los_Angeles"
+    )
+    assert environment_count.text() == "1 个环境"
+    window.close()
+    app.quit()
+
+
+def test_gui_stylesheet_defines_workbench_sections() -> None:
+    from app.desktop.window import _desktop_stylesheet
+
+    stylesheet = _desktop_stylesheet()
+
+    assert "QFrame#workspace_header" in stylesheet
+    assert "QFrame#network_section" in stylesheet
+    assert "QFrame#fingerprint_section" in stylesheet
+    assert "QListWidget#saved_configurations::item" in stylesheet
+
+
 def test_gui_can_save_and_launch_selected_persistent_config() -> None:
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtCore import Qt
@@ -188,6 +238,38 @@ def test_gui_can_save_and_launch_selected_persistent_config() -> None:
     app.quit()
 
 
+def test_gui_blocks_deleting_running_saved_environment() -> None:
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication, QLabel, QListWidget, QPushButton
+
+    from app.desktop.state_store import StateStore
+    from app.desktop.window import create_main_window
+    from app.runtime.config import LaunchConfig
+
+    class FakeSession:
+        def stop(self) -> None:
+            return None
+
+    app = QApplication.instance() or QApplication([])
+    store = StateStore(_desktop_paths())
+    saved = store.save_config(LaunchConfig(name="运行环境"))
+    window = create_main_window(
+        launch_handler=lambda **kwargs: FakeSession(),
+        state_store=store,
+        geo_probe=lambda _: None,
+    )
+    config_list = window.findChild(QListWidget, "saved_configurations")
+    config_list.setCurrentRow(0)
+
+    window.findChild(QPushButton, "launch_current_form").click()
+    window.findChild(QPushButton, "delete_profile_data").click()
+
+    assert store.load_config(saved.config_id).name == "运行环境"
+    assert window.findChild(QLabel, "diagnostic_log").text() == "请先停止该环境再删除"
+    window.close()
+    app.quit()
+
+
 def test_desktop_gui_script_is_thin_entry_point() -> None:
     script = Path("scripts/desktop_gui.py").read_text(encoding="utf-8")
 
@@ -234,6 +316,104 @@ def test_desktop_launch_smoke_clicks_launch_button_and_stops_session() -> None:
 
     assert result == 0
     assert session.stopped is True
+
+
+def test_closing_desktop_window_stops_running_sessions() -> None:
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication, QPushButton
+
+    from app.desktop.window import create_main_window
+
+    class FakeSession:
+        stopped = False
+
+        def stop(self) -> None:
+            self.stopped = True
+
+    session = FakeSession()
+
+    app = QApplication.instance() or QApplication([])
+    window = create_main_window(launch_handler=lambda **kwargs: session)
+    window.findChild(QPushButton, "launch_current_form").click()
+
+    window.close()
+
+    assert session.stopped is True
+    app.quit()
+
+
+def test_desktop_session_stop_releases_lock_after_launcher_failure() -> None:
+    import pytest
+
+    from app.desktop.window import DesktopLaunchedSession
+
+    class FailingLauncher:
+        def stop(self, launch_result) -> None:
+            raise RuntimeError("stop failed")
+
+    class FakeLock:
+        released = False
+
+        def release(self) -> None:
+            self.released = True
+
+    lock = FakeLock()
+    session = DesktopLaunchedSession(
+        session_id="desktop-1",
+        launcher=FailingLauncher(),
+        launch_result=object(),
+        profile_lock=lock,
+    )
+
+    with pytest.raises(RuntimeError):
+        session.stop()
+
+    assert lock.released is True
+
+
+def test_desktop_launch_failure_releases_lock_when_stop_fails(monkeypatch) -> None:
+    import pytest
+
+    import app.desktop.window as desktop_window
+    from app.runtime.chromium_launcher import ChromiumLaunchResult
+    from app.runtime.config import LaunchConfig
+    from app.runtime.profiles import RUNTIME_LOCK_FILENAME
+
+    class FailingStopLauncher:
+        profile_dirs: list[Path] = []
+
+        def __init__(self, *, chrome_executable, relay_executable, paths) -> None:
+            self.chrome_executable = chrome_executable
+
+        def launch(self, *, config, session_id: str, start_url: str, profile_dir: Path):
+            self.profile_dirs.append(profile_dir)
+            return ChromiumLaunchResult(
+                process=object(),
+                args=["chrome.exe"],
+                cdp_port=9222,
+                profile_dir=profile_dir,
+                relay=None,
+            )
+
+        def stop(self, launch_result) -> None:
+            raise RuntimeError("stop failed")
+
+    def failing_controller(**kwargs):
+        raise RuntimeError("controller failed")
+
+    monkeypatch.setattr(desktop_window, "resolve_portable_paths", lambda create=False: _desktop_paths())
+    monkeypatch.setattr(desktop_window, "ChromiumLauncher", FailingStopLauncher)
+    monkeypatch.setattr(desktop_window, "_start_fingerprint_controller", failing_controller)
+
+    with pytest.raises(RuntimeError):
+        desktop_window._launch_browser_session(
+            config=LaunchConfig(name="Launch"),
+            start_url="https://example.test/",
+        )
+
+    profile_dir = FailingStopLauncher.profile_dirs[0]
+    assert not (profile_dir / RUNTIME_LOCK_FILENAME).exists()
+    assert not profile_dir.exists()
 
 
 def test_desktop_launch_smoke_can_enable_default_proxy() -> None:

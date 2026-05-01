@@ -18,7 +18,7 @@ def run_desktop_gui(
 ) -> int:
     try:
         from PySide6.QtCore import Qt
-        from PySide6.QtWidgets import QApplication, QCheckBox, QComboBox, QLineEdit, QPushButton
+        from PySide6.QtWidgets import QApplication, QCheckBox, QComboBox, QLabel, QLineEdit, QPushButton
     except ImportError:
         _emit_status("缺少 PySide6，无法启动桌面界面。")
         return 2
@@ -52,11 +52,18 @@ def run_desktop_gui(
             return 1
         button.click()
         sessions = list(getattr(window, "_orangelink_sessions", []))
+        status_label = window.findChild(QLabel, "diagnostic_log")
+        _emit_status(
+            "launch smoke status: "
+            f"sessions={len(sessions)} "
+            f"detail={status_label.text() if status_label is not None else ''}"
+        )
         smoke_ok = bool(sessions)
         for session in sessions:
             launch_result = getattr(session, "launch_result", None)
             if launch_result is not None:
                 if not _wait_for_cdp_version(launch_result.cdp_port, timeout_s=20):
+                    _emit_status(f"launch smoke cdp failed: port={launch_result.cdp_port}")
                     smoke_ok = False
         for session in sessions:
             stop = getattr(session, "stop", None)

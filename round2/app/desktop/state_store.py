@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from app.runtime.config import LaunchConfig, PortablePaths
-from app.runtime.profiles import remove_tree_with_retries
+from app.runtime.profiles import RUNTIME_LOCK_FILENAME, remove_tree_with_retries
 
 
 @dataclass(frozen=True)
@@ -88,6 +88,8 @@ class StateStore:
             "owner_id": config_id,
             "created_by": "orangelink-browser",
         }:
+            if (profile_dir / RUNTIME_LOCK_FILENAME).exists():
+                return False
             return remove_tree_with_retries(profile_dir)
         return False
 

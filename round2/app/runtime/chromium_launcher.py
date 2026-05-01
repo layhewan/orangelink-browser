@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from app.runtime.config import DEFAULT_START_PAGE, LaunchConfig, PortablePaths
+from app.runtime.config import DEFAULT_START_PAGE, LaunchConfig, PortablePaths, normalize_language_tag
 from app.runtime.proxy_contract import ProxyMode
 
 
@@ -179,7 +179,10 @@ def _resolve_start_url(start_url: str, homepage_file: Path | None) -> str:
 
 def _launch_language(config: LaunchConfig) -> str:
     if config.automatic_language:
-        return (config.cached_language if config.proxy_enabled else "") or config.manual_language
+        return normalize_language_tag(
+            (config.cached_language if config.proxy_enabled else "") or config.manual_language,
+            fallback=config.manual_language,
+        )
     return config.manual_language
 
 

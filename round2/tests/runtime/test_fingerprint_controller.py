@@ -42,6 +42,12 @@ class FakeConnection:
             raise OSError("already closed")
 
 
+class SlowNavigateConnection(FakeConnection):
+    def navigate(self, session_id: str, url: str) -> None:
+        super().navigate(session_id, url)
+        raise TimeoutError("navigation response was slow")
+
+
 class FakeTarget:
     def __init__(self, target_id: str, target_type: str) -> None:
         self.target_id = target_id
@@ -80,6 +86,22 @@ def test_controller_enables_auto_attach_before_start_page_navigation() -> None:
     controller.stop()
 
     assert cdp.events.index("Target.setAutoAttach") < cdp.events.index("Page.navigate")
+    assert cdp.navigations == [("session-page-1", "https://www.browserscan.net/")]
+
+
+def test_controller_becomes_ready_when_start_navigation_response_is_slow() -> None:
+    from app.runtime.fingerprint_controller import BrowserFingerprintController
+
+    cdp = SlowNavigateConnection()
+    controller = BrowserFingerprintController(
+        connection_factory=lambda: cdp,
+        profile=_profile(),
+        start_url="https://www.browserscan.net/",
+    )
+    controller.start()
+    controller.wait_ready(timeout_s=1)
+    controller.stop()
+
     assert cdp.navigations == [("session-page-1", "https://www.browserscan.net/")]
 
 

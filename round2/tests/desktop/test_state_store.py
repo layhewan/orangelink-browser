@@ -78,6 +78,32 @@ def test_delete_saved_config_does_not_remove_unmarked_profile_data() -> None:
     assert profile_dir.exists()
 
 
+def test_delete_saved_config_does_not_remove_profile_with_runtime_lock() -> None:
+    from app.runtime.config import LaunchConfig
+    from app.runtime.profiles import RUNTIME_LOCK_FILENAME
+
+    store = _store()
+    saved = store.save_config(LaunchConfig(name="Persistent"))
+    profile_dir = store.profile_dir_for(saved.config_id)
+    profile_dir.mkdir(parents=True)
+    (profile_dir / "owner.json").write_text(
+        json.dumps(
+            {
+                "owner_type": "saved_config",
+                "owner_id": saved.config_id,
+                "created_by": "orangelink-browser",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (profile_dir / RUNTIME_LOCK_FILENAME).write_text("{}", encoding="utf-8")
+
+    assert store.delete_config(saved.config_id, remove_profile=True) is False
+
+    assert profile_dir.exists()
+    assert (profile_dir / RUNTIME_LOCK_FILENAME).exists()
+
+
 def test_delete_saved_config_keeps_state_when_owned_profile_is_locked(monkeypatch) -> None:
     from app.runtime.config import LaunchConfig
 
