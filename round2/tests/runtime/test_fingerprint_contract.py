@@ -53,6 +53,9 @@ def test_automatic_language_and_timezone_can_use_config_cache() -> None:
     profile = build_fingerprint_profile(
         LaunchConfig(
             name="Cached",
+            proxy_enabled=True,
+            proxy_host="127.0.0.1",
+            proxy_port=7897,
             cached_language="ja-JP",
             cached_timezone="Asia/Tokyo",
         ),
@@ -61,6 +64,27 @@ def test_automatic_language_and_timezone_can_use_config_cache() -> None:
 
     assert profile.language == "ja-JP"
     assert profile.timezone == "Asia/Tokyo"
+
+
+def test_direct_mode_ignores_stale_proxy_geo_cache() -> None:
+    from app.runtime.config import LaunchConfig
+    from app.runtime.engine_version import BrowserEngineVersion
+    from app.runtime.fingerprint import build_fingerprint_profile
+
+    profile = build_fingerprint_profile(
+        LaunchConfig(
+            name="Direct",
+            proxy_enabled=False,
+            manual_language="en-US",
+            manual_timezone="UTC",
+            cached_language="zh-CN",
+            cached_timezone="Asia/Shanghai",
+        ),
+        actual_engine=BrowserEngineVersion(family="Chromium", major=123, full_version="123.0.0.0"),
+    )
+
+    assert profile.language == "en-US"
+    assert profile.timezone == "UTC"
 
 
 def test_fingerprint_overrides_are_applied_through_cdp() -> None:

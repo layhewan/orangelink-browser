@@ -151,6 +151,7 @@ def build_chromium_args(
         "--disable-features=DnsOverHttps,UseDnsHttpsSvcb,Quic",
         "--webrtc-ip-handling-policy=disable_non_proxied_udp",
         "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
+        f"--lang={_launch_language(config)}",
         "--proxy-bypass-list=<-loopback>",
         "--remote-debugging-address=127.0.0.1",
         f"--remote-debugging-port={remote_debugging_port}",
@@ -174,6 +175,12 @@ def _resolve_start_url(start_url: str, homepage_file: Path | None) -> str:
     if start_url == DEFAULT_START_PAGE and homepage_file is not None:
         return homepage_file.resolve().as_uri()
     return start_url
+
+
+def _launch_language(config: LaunchConfig) -> str:
+    if config.automatic_language:
+        return (config.cached_language if config.proxy_enabled else "") or config.manual_language
+    return config.manual_language
 
 
 def _parse_ready_port(ready_line: str) -> int:

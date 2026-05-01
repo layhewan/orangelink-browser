@@ -25,13 +25,21 @@ def enrich_config_with_proxy_geo(
     probe: Callable[[LaunchConfig], ProxyGeoResult | None] | None = None,
 ) -> LaunchConfig:
     if not config.proxy_enabled:
-        return config
+        return replace(
+            config,
+            cached_language="" if config.automatic_language else config.cached_language,
+            cached_timezone="" if config.automatic_timezone else config.cached_timezone,
+        )
     if not config.automatic_language and not config.automatic_timezone:
         return config
 
     result = (probe or probe_proxy_geo)(config)
     if result is None:
-        return config
+        return replace(
+            config,
+            cached_language="" if config.automatic_language else config.cached_language,
+            cached_timezone="" if config.automatic_timezone else config.cached_timezone,
+        )
 
     return replace(
         config,

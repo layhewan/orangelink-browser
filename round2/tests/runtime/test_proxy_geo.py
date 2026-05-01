@@ -61,3 +61,22 @@ def test_enrich_config_with_proxy_geo_cache_sets_auto_values() -> None:
 
     assert enriched.cached_timezone == "Asia/Tokyo"
     assert enriched.cached_language == "ja-JP"
+
+
+def test_enrich_config_clears_stale_auto_cache_when_proxy_geo_probe_fails() -> None:
+    from app.runtime.config import LaunchConfig
+    from app.runtime.proxy_geo import enrich_config_with_proxy_geo
+
+    config = LaunchConfig(
+        name="Auto",
+        proxy_enabled=True,
+        proxy_host="127.0.0.1",
+        proxy_port=7897,
+        cached_timezone="Asia/Shanghai",
+        cached_language="zh-CN",
+    )
+
+    enriched = enrich_config_with_proxy_geo(config, probe=lambda _: None)
+
+    assert enriched.cached_timezone == ""
+    assert enriched.cached_language == ""

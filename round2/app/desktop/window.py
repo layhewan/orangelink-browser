@@ -13,7 +13,8 @@ from app.runtime.chromium_launcher import ChromiumLauncher, ChromiumLaunchResult
 from app.runtime.cdp_client import connect_browser, wait_for_version
 from app.runtime.config import LaunchConfig, resolve_portable_paths
 from app.runtime.engine_version import read_chromium_version
-from app.runtime.fingerprint import apply_fingerprint_overrides, build_fingerprint_profile
+from app.runtime.fingerprint import build_fingerprint_profile
+from app.runtime.fingerprint_controller import BrowserFingerprintController
 from app.runtime.profiles import ProfileHandle, ProfileManager
 from app.runtime.proxy_geo import ProxyGeoResult, enrich_config_with_proxy_geo, probe_proxy_geo
 
@@ -100,8 +101,11 @@ class DesktopLaunchedSession:
     profile_manager: ProfileManager | None = None
     profile: ProfileHandle | None = None
     saved_config_id: str | None = None
+    fingerprint_controller: BrowserFingerprintController | None = None
 
     def stop(self) -> None:
+        if self.fingerprint_controller is not None:
+            self.fingerprint_controller.stop()
         self.launcher.stop(self.launch_result)
         if self.profile_manager is not None and self.profile is not None:
             self.profile_manager.cleanup_temporary(self.profile)
@@ -659,8 +663,9 @@ def _launch_browser_session(
         start_url="about:blank",
         profile_dir=profile.path,
     )
+    fingerprint_controller = None
     try:
-        _apply_initial_fingerprint_and_navigate(
+        fingerprint_controller = _start_fingerprint_controller(
             launch_result=launch_result,
             config=config,
             chrome_executable=launcher.chrome_executable,
@@ -678,6 +683,7 @@ def _launch_browser_session(
         profile_manager=profile_manager,
         profile=profile,
         saved_config_id=saved_config_id,
+        fingerprint_controller=fingerprint_controller,
     )
 
 
@@ -693,24 +699,26 @@ def _resolve_relay_executable(base: Path) -> Path:
     return candidates[0]
 
 
-def _apply_initial_fingerprint_and_navigate(
+def _start_fingerprint_controller(
     *,
     launch_result: ChromiumLaunchResult,
     config: LaunchConfig,
     chrome_executable: Path,
     start_url: str,
     session_id: str,
-) -> None:
+) -> BrowserFingerprintController:
     version = wait_for_version(launch_result.cdp_port, timeout_s=15)
-    browser = connect_browser(version.web_socket_debugger_url)
+    engine = read_chromium_version(chrome_executable)
+    fingerprint_profile = build_fingerprint_profile(config, actual_engine=engine)
+    controller = BrowserFingerprintController(
+        connection_factory=lambda: connect_browser(version.web_socket_debugger_url),
+        profile=fingerprint_profile,
+        start_url=start_url,
+    )
+    controller.start()
     try:
-        targets = [target for target in browser.list_targets() if target.type == "page"]
-        if not targets:
-            return
-        page = browser.attach_to_target(targets[0].target_id)
-        engine = read_chromium_version(chrome_executable)
-        profile = build_fingerprint_profile(config, actual_engine=engine)
-        apply_fingerprint_overrides(browser, page.session_id, profile)
-        browser.navigate(page.session_id, start_url)
-    finally:
-        browser.close()
+        controller.wait_ready(timeout_s=10)
+    except Exception:
+        controller.stop()
+        raise
+    return controller
