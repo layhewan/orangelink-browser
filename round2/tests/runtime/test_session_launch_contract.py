@@ -190,6 +190,66 @@ def test_chromium_stderr_is_logged_for_packaged_launch_diagnostics() -> None:
     assert base.joinpath("data", "logs", "chromium-session-logs.log").exists()
 
 
+def test_chromium_launcher_persists_profile_accept_language_preference() -> None:
+    from app.runtime.chromium_launcher import ChromiumLauncher
+    from app.runtime.config import LaunchConfig, resolve_portable_paths
+
+    base = _reset_runtime_base()
+    recorder = RecordingPopen()
+    launcher = ChromiumLauncher(
+        chrome_executable=Path("runtime/chromium/chrome.exe"),
+        relay_executable=Path("proxy-relay.exe"),
+        paths=resolve_portable_paths(base=base, create=True),
+        popen_factory=recorder,
+        port_allocator=lambda: 9222,
+    )
+
+    result = launcher.launch(
+        config=LaunchConfig(
+            name="HK",
+            proxy_enabled=True,
+            proxy_host="127.0.0.1",
+            proxy_port=7897,
+            cached_language="zh-HK",
+        ),
+        session_id="session-language",
+        start_url="https://example.test/",
+    )
+
+    preferences = json.loads((result.profile_dir / "Default" / "Preferences").read_text(encoding="utf-8"))
+    assert preferences["intl"]["accept_languages"] == "zh-HK,zh;q=0.9"
+
+
+def test_chromium_launcher_keeps_hong_kong_web_locale_when_ui_locale_falls_back() -> None:
+    from app.runtime.chromium_launcher import ChromiumLauncher
+    from app.runtime.config import LaunchConfig, resolve_portable_paths
+
+    base = _reset_runtime_base()
+    recorder = RecordingPopen()
+    launcher = ChromiumLauncher(
+        chrome_executable=Path("runtime/chromium/chrome.exe"),
+        relay_executable=Path("proxy-relay.exe"),
+        paths=resolve_portable_paths(base=base, create=True),
+        popen_factory=recorder,
+        port_allocator=lambda: 9222,
+    )
+
+    result = launcher.launch(
+        config=LaunchConfig(
+            name="HK",
+            proxy_enabled=True,
+            proxy_host="127.0.0.1",
+            proxy_port=7897,
+            cached_language="zh-HK",
+        ),
+        session_id="session-hk",
+        start_url="https://example.test/",
+    )
+
+    assert "--lang=zh-TW" in result.args
+    assert "--accept-lang=zh-HK,zh;q=0.9" in result.args
+
+
 def test_proxy_relay_ready_wait_times_out_instead_of_hanging_gui() -> None:
     from app.runtime.chromium_launcher import ChromiumLauncher
     from app.runtime.config import LaunchConfig, resolve_portable_paths

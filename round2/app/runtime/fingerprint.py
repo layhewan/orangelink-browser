@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Any
 
@@ -136,15 +137,91 @@ def _navigator_override_script(profile: FingerprintProfile) -> str:
     languages = [profile.language]
     if "-" in profile.language:
         languages.append(profile.language.split("-", 1)[0])
-    return (
-        "(() => {"
-        f"Object.defineProperty(navigator, 'language', {{get: () => {profile.language!r}}});"
-        f"Object.defineProperty(navigator, 'languages', {{get: () => {languages!r}}});"
-        f"Object.defineProperty(navigator, 'platform', {{get: () => {profile.navigator_platform!r}}});"
-        f"Object.defineProperty(navigator, 'hardwareConcurrency', {{get: () => {profile.hardware_concurrency}}});"
-        f"Object.defineProperty(navigator, 'deviceMemory', {{get: () => {profile.device_memory}}});"
-        "})();"
-    )
+    return f"""
+(() => {{
+  const language = {json.dumps(profile.language)};
+  const languages = {json.dumps(languages)};
+  const define = (target, key, value) => {{
+    try {{
+      Object.defineProperty(target, key, {{get: () => value, configurable: true}});
+    }} catch (_) {{}}
+  }};
+  define(navigator, 'language', language);
+  define(navigator, 'languages', languages);
+  define(navigator, 'platform', {json.dumps(profile.navigator_platform)});
+  define(navigator, 'hardwareConcurrency', {profile.hardware_concurrency});
+  define(navigator, 'deviceMemory', {profile.device_memory});
+
+  const defaultIntlInstances = new WeakSet();
+  const normalizeLocaleArgs = (args) => {{
+    const values = Array.from(args);
+    const usesDefaultLocale = values.length === 0
+      || values[0] === undefined
+      || values[0] === null
+      || (Array.isArray(values[0]) && values[0].length === 0);
+    if (usesDefaultLocale) {{
+      values[0] = language;
+      values.__orangelinkDefaultLocale = true;
+    }}
+    return values;
+  }};
+  const patchIntlConstructor = (name) => {{
+    const Original = Intl[name];
+    if (typeof Original !== 'function') {{
+      return;
+    }}
+    const resolved = Original.prototype && Object.getOwnPropertyDescriptor(Original.prototype, 'resolvedOptions');
+    if (resolved && typeof resolved.value === 'function') {{
+      try {{
+        Object.defineProperty(Original.prototype, 'resolvedOptions', {{
+          value: function(...args) {{
+            const options = resolved.value.apply(this, args);
+            if (defaultIntlInstances.has(this)) {{
+              options.locale = language;
+            }}
+            return options;
+          }},
+          configurable: true,
+          writable: true
+        }});
+      }} catch (_) {{}}
+    }}
+    const Wrapped = new Proxy(Original, {{
+      apply(target, thisArg, args) {{
+        const localeArgs = normalizeLocaleArgs(args);
+        const instance = Reflect.apply(target, thisArg, localeArgs);
+        if (localeArgs.__orangelinkDefaultLocale && instance && typeof instance === 'object') {{
+          defaultIntlInstances.add(instance);
+        }}
+        return instance;
+      }},
+      construct(target, args, newTarget) {{
+        const localeArgs = normalizeLocaleArgs(args);
+        const instance = Reflect.construct(target, localeArgs, newTarget);
+        if (localeArgs.__orangelinkDefaultLocale && instance && typeof instance === 'object') {{
+          defaultIntlInstances.add(instance);
+        }}
+        return instance;
+      }}
+    }});
+    try {{
+      Object.defineProperty(Wrapped, 'toString', {{value: () => Original.toString()}});
+    }} catch (_) {{}}
+    try {{
+      Object.defineProperty(Intl, name, {{value: Wrapped, configurable: true, writable: true}});
+    }} catch (_) {{}}
+  }};
+  [
+    ['DateTimeFormat', Intl.DateTimeFormat],
+    ['NumberFormat', Intl.NumberFormat],
+    ['Collator', Intl.Collator],
+    ['PluralRules', Intl.PluralRules],
+    ['RelativeTimeFormat', Intl.RelativeTimeFormat],
+    ['ListFormat', Intl.ListFormat],
+    ['Segmenter', Intl.Segmenter]
+  ].forEach(([name]) => patchIntlConstructor(name));
+}})();
+"""
 
 
 def _send_cdp(cdp: Any, method: str, params: dict[str, Any], *, session_id: str) -> None:

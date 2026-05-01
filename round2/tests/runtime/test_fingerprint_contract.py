@@ -148,6 +148,34 @@ def test_fingerprint_overrides_are_applied_through_cdp() -> None:
     assert timezone_params == {"timezoneId": "America/New_York"}
 
 
+def test_fingerprint_script_aligns_intl_locale_with_browser_language() -> None:
+    from app.runtime.config import LaunchConfig
+    from app.runtime.engine_version import BrowserEngineVersion
+    from app.runtime.fingerprint import apply_fingerprint_overrides, build_fingerprint_profile
+
+    cdp = FakeCdp()
+    profile = build_fingerprint_profile(
+        LaunchConfig(
+            name="Hong Kong",
+            automatic_language=False,
+            manual_language="zh-HK",
+        ),
+        actual_engine=BrowserEngineVersion(family="Chromium", major=123, full_version="123.0.0.0"),
+    )
+
+    apply_fingerprint_overrides(cdp, "session-1", profile)
+
+    script = next(
+        params["source"]
+        for _, method, params in cdp.commands
+        if method == "Page.addScriptToEvaluateOnNewDocument"
+    )
+    assert "zh-HK" in script
+    assert "Intl.DateTimeFormat" in script
+    assert "Intl.NumberFormat" in script
+    assert "resolvedOptions" in script
+
+
 def test_os_override_changes_user_agent_platform_consistently() -> None:
     from app.runtime.config import LaunchConfig
     from app.runtime.engine_version import BrowserEngineVersion

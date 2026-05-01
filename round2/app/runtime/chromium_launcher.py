@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import queue
 import subprocess
@@ -58,6 +59,7 @@ class ChromiumLauncher:
         cdp_port = self._port_allocator()
         resolved_profile_dir = profile_dir or self.paths.profiles / session_id
         resolved_profile_dir.mkdir(parents=True, exist_ok=True)
+        _write_language_preferences(resolved_profile_dir, config)
         args = build_chromium_args(
             config=config,
             chrome_executable=self.chrome_executable,
@@ -151,7 +153,8 @@ def build_chromium_args(
         "--disable-features=DnsOverHttps,UseDnsHttpsSvcb,Quic",
         "--webrtc-ip-handling-policy=disable_non_proxied_udp",
         "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
-        f"--lang={_launch_language(config)}",
+        f"--lang={_launch_ui_language(config)}",
+        f"--accept-lang={_launch_accept_language(config)}",
         "--proxy-bypass-list=<-loopback>",
         "--remote-debugging-address=127.0.0.1",
         f"--remote-debugging-port={remote_debugging_port}",
@@ -184,6 +187,45 @@ def _launch_language(config: LaunchConfig) -> str:
             fallback=config.manual_language,
         )
     return config.manual_language
+
+
+def _launch_accept_language(config: LaunchConfig) -> str:
+    language = normalize_language_tag(_launch_language(config), fallback="en-US")
+    if "-" not in language:
+        return language
+    base = language.split("-", 1)[0]
+    return f"{language},{base};q=0.9"
+
+
+def _launch_ui_language(config: LaunchConfig) -> str:
+    language = _launch_language(config)
+    return {
+        "zh-HK": "zh-TW",
+        "ja-JP": "ja",
+        "ko-KR": "ko",
+        "de-DE": "de",
+        "fr-FR": "fr",
+        "es-ES": "es",
+        "ru-RU": "ru",
+    }.get(language, language)
+
+
+def _write_language_preferences(profile_dir: Path, config: LaunchConfig) -> None:
+    default_dir = profile_dir / "Default"
+    default_dir.mkdir(parents=True, exist_ok=True)
+    preferences_path = default_dir / "Preferences"
+    preferences: dict[str, Any] = {}
+    if preferences_path.exists():
+        try:
+            preferences = json.loads(preferences_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            preferences = {}
+    preferences.setdefault("intl", {})["accept_languages"] = _launch_accept_language(config)
+    preferences.setdefault("translate", {})["enabled"] = False
+    preferences_path.write_text(
+        json.dumps(preferences, ensure_ascii=False, separators=(",", ":")),
+        encoding="utf-8",
+    )
 
 
 def _parse_ready_port(ready_line: str) -> int:

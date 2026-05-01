@@ -87,6 +87,51 @@ def test_chromium_launch_sets_process_language_from_cached_proxy_language() -> N
     assert "--lang=en-US" in args
 
 
+def test_chromium_launch_sets_accept_language_from_cached_proxy_language() -> None:
+    from app.runtime.chromium_launcher import build_chromium_args
+    from app.runtime.config import LaunchConfig
+
+    args = build_chromium_args(
+        config=LaunchConfig(
+            name="HK Proxy",
+            proxy_enabled=True,
+            proxy_host="127.0.0.1",
+            proxy_port=7897,
+            cached_language="zh-HK",
+        ),
+        chrome_executable=Path("runtime/chromium/chrome.exe"),
+        profile_dir=Path("data/profiles/session-1"),
+        remote_debugging_port=9222,
+        relay_port=45678,
+        start_url="https://example.test/",
+    )
+
+    assert "--accept-lang=zh-HK,zh;q=0.9" in args
+
+
+def test_chromium_launch_uses_supported_ui_locale_without_changing_web_language() -> None:
+    from app.runtime.chromium_launcher import build_chromium_args
+    from app.runtime.config import LaunchConfig
+
+    args = build_chromium_args(
+        config=LaunchConfig(
+            name="HK Proxy",
+            proxy_enabled=True,
+            proxy_host="127.0.0.1",
+            proxy_port=7897,
+            cached_language="zh-HK",
+        ),
+        chrome_executable=Path("runtime/chromium/chrome.exe"),
+        profile_dir=Path("data/profiles/session-1"),
+        remote_debugging_port=9222,
+        relay_port=45678,
+        start_url="https://example.test/",
+    )
+
+    assert "--lang=zh-TW" in args
+    assert "--accept-lang=zh-HK,zh;q=0.9" in args
+
+
 def test_chromium_launch_sanitizes_cached_accept_language_value() -> None:
     from app.runtime.chromium_launcher import build_chromium_args
     from app.runtime.config import LaunchConfig
@@ -107,6 +152,7 @@ def test_chromium_launch_sanitizes_cached_accept_language_value() -> None:
     )
 
     assert "--lang=en-US" in args
+    assert "--accept-lang=en-US,en;q=0.9" in args
     assert not any(";q=" in arg for arg in args if arg.startswith("--lang="))
 
 

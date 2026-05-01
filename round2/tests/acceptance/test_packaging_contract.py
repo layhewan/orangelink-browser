@@ -56,6 +56,7 @@ def test_build_script_has_chromium_missing_message_and_readme_generation() -> No
     script = Path("scripts/build_portable.ps1").read_text(encoding="utf-8")
 
     assert "Chromium runtime not found:" in script
+    assert "chrome-win64" in script
     assert "runtime\\chromium" in script
     assert "README_PORTABLE.txt" in script
 

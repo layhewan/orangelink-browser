@@ -32,8 +32,8 @@ def test_invalid_config_returns_user_facing_chinese_error() -> None:
 def test_window_model_exposes_primary_user_path_sections() -> None:
     from app.desktop.window import MAIN_WINDOW_SECTIONS, MINIMUM_WINDOW_SIZE, USES_SCROLL_AREA
 
-    assert MINIMUM_WINDOW_SIZE == (980, 680)
-    assert USES_SCROLL_AREA is True
+    assert MINIMUM_WINDOW_SIZE == (1320, 760)
+    assert USES_SCROLL_AREA is False
     assert MAIN_WINDOW_SECTIONS == (
         "configuration_editor",
         "launch_current_form",
@@ -55,10 +55,10 @@ def test_create_main_window_uses_strings_for_all_sections() -> None:
     window = create_main_window()
 
     assert window.windowTitle() == "脐橙浏览器"
-    assert window.minimumWidth() == 980
-    assert window.minimumHeight() == 680
+    assert window.minimumWidth() == 1320
+    assert window.minimumHeight() == 760
     assert window.windowIcon().isNull() is False
-    assert isinstance(window.centralWidget(), QScrollArea)
+    assert not isinstance(window.centralWidget(), QScrollArea)
     window.close()
     app.quit()
 
@@ -181,6 +181,7 @@ def test_gui_stylesheet_defines_workbench_sections() -> None:
     assert "QFrame#workspace_header" in stylesheet
     assert "QFrame#network_section" in stylesheet
     assert "QFrame#fingerprint_section" in stylesheet
+    assert "QFrame#session_section" in stylesheet
     assert "QListWidget#saved_configurations::item" in stylesheet
 
 
@@ -234,6 +235,76 @@ def test_gui_can_save_and_launch_selected_persistent_config() -> None:
     assert captured["config"].extension_support is False
     assert captured["start_url"] == "https://www.baidu.com/"
     assert captured["saved_config_id"] == "1"
+    window.close()
+    app.quit()
+
+
+def test_gui_save_button_creates_new_environment_instead_of_overwriting_selection() -> None:
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication, QLineEdit, QListWidget, QPushButton
+
+    from app.desktop.state_store import StateStore
+    from app.desktop.window import create_main_window
+
+    app = QApplication.instance() or QApplication([])
+    store = StateStore(_desktop_paths())
+    window = create_main_window(
+        launch_handler=lambda **kwargs: object(),
+        state_store=store,
+        geo_probe=lambda _: None,
+    )
+
+    name_input = window.findChild(QLineEdit, "config_name")
+    save_button = window.findChild(QPushButton, "save_config")
+    config_list = window.findChild(QListWidget, "saved_configurations")
+
+    name_input.setText("环境 A")
+    save_button.click()
+    config_list.setCurrentRow(0)
+    name_input.setText("环境 B")
+    save_button.click()
+
+    saved = store.list_configs()
+    assert [item.config.name for item in saved] == ["环境 A", "环境 B"]
+    assert config_list.count() == 2
+    assert config_list.currentRow() == 1
+    window.close()
+    app.quit()
+
+
+def test_gui_launch_dirty_selected_environment_saves_new_profile_id() -> None:
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication, QLineEdit, QListWidget, QPushButton
+
+    from app.desktop.state_store import StateStore
+    from app.desktop.window import create_main_window
+    from app.runtime.config import LaunchConfig
+
+    captured = {}
+
+    def launch_handler(*, config, start_url, saved_config_id=None):
+        captured["config"] = config
+        captured["saved_config_id"] = saved_config_id
+        return object()
+
+    app = QApplication.instance() or QApplication([])
+    store = StateStore(_desktop_paths())
+    store.save_config(LaunchConfig(name="环境 A"))
+    window = create_main_window(
+        launch_handler=launch_handler,
+        state_store=store,
+        geo_probe=lambda _: None,
+    )
+
+    config_list = window.findChild(QListWidget, "saved_configurations")
+    config_list.setCurrentRow(0)
+    window.findChild(QLineEdit, "config_name").setText("环境 B")
+    window.findChild(QPushButton, "launch_current_form").click()
+
+    assert captured["config"].name == "环境 B"
+    assert captured["saved_config_id"] == "2"
+    assert [item.config.name for item in store.list_configs()] == ["环境 A", "环境 B"]
+    assert config_list.currentRow() == 1
     window.close()
     app.quit()
 
