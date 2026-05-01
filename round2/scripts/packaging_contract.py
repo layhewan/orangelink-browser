@@ -6,6 +6,7 @@ from pathlib import Path
 REQUIRED_PORTABLE_PATHS = (
     "脐橙浏览器.exe",
     "Start-脐橙浏览器.bat",
+    "_internal",
     "proxy-relay.exe",
     "runtime/chromium/chrome.exe",
     "data",

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
 
 
 def test_wait_for_version_reads_loopback_cdp_version_endpoint() -> None:
@@ -42,6 +43,12 @@ def test_cdp_connection_sends_expected_commands_with_session_id() -> None:
     assert second["sessionId"] == "session-1"
     assert second["method"] == "Page.navigate"
     assert second["params"]["url"] == "https://example.test/"
+
+
+def test_cdp_client_does_not_depend_on_external_websocket_package() -> None:
+    source = Path("app/runtime/cdp_client.py").read_text(encoding="utf-8")
+
+    assert "websockets" not in source
 
 
 class VersionHandler(BaseHTTPRequestHandler):

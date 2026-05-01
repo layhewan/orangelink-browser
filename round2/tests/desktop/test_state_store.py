@@ -59,7 +59,7 @@ def test_delete_saved_config_can_remove_owned_profile_data() -> None:
     )
     (profile_dir / "Extension State").mkdir()
 
-    store.delete_config(saved.config_id, remove_profile=True)
+    assert store.delete_config(saved.config_id, remove_profile=True) is True
 
     assert not profile_dir.exists()
 
@@ -73,8 +73,37 @@ def test_delete_saved_config_does_not_remove_unmarked_profile_data() -> None:
     profile_dir.mkdir(parents=True)
     (profile_dir / "unowned.txt").write_text("keep", encoding="utf-8")
 
-    store.delete_config(saved.config_id, remove_profile=True)
+    assert store.delete_config(saved.config_id, remove_profile=True) is False
 
+    assert profile_dir.exists()
+
+
+def test_delete_saved_config_keeps_state_when_owned_profile_is_locked(monkeypatch) -> None:
+    from app.runtime.config import LaunchConfig
+
+    store = _store()
+    saved = store.save_config(LaunchConfig(name="Persistent"))
+    profile_dir = store.profile_dir_for(saved.config_id)
+    profile_dir.mkdir(parents=True)
+    (profile_dir / "owner.json").write_text(
+        json.dumps(
+            {
+                "owner_type": "saved_config",
+                "owner_id": saved.config_id,
+                "created_by": "orangelink-browser",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def locked_rmtree(path: Path) -> None:
+        raise PermissionError("profile file is still closing")
+
+    monkeypatch.setattr("app.runtime.profiles.shutil.rmtree", locked_rmtree)
+
+    assert store.delete_config(saved.config_id, remove_profile=True) is False
+
+    assert store.list_configs() == []
     assert profile_dir.exists()
 
 

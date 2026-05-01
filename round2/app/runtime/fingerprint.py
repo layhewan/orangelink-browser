@@ -50,12 +50,12 @@ def build_fingerprint_profile(
 ) -> FingerprintProfile:
     geo_cache = proxy_geo_cache or {}
     language = (
-        geo_cache.get("language")
+        geo_cache.get("language") or config.cached_language
         if config.automatic_language
         else config.manual_language
     ) or config.manual_language
     timezone = (
-        geo_cache.get("timezone")
+        geo_cache.get("timezone") or config.cached_timezone
         if config.automatic_timezone
         else config.manual_timezone
     ) or config.manual_timezone

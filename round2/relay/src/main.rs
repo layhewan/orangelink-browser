@@ -1,6 +1,6 @@
 use std::env;
 use std::io::{self, Read, Write};
-use std::net::{Shutdown, TcpListener, TcpStream};
+use std::net::{Ipv4Addr, Ipv6Addr, Shutdown, TcpListener, TcpStream};
 use std::process;
 use std::thread;
 use std::time::Duration;
@@ -8,7 +8,19 @@ use std::time::Duration;
 #[derive(Clone)]
 enum RelayMode {
     Direct,
-    Proxy { upstream: Endpoint },
+    Proxy { upstream: UpstreamProxy },
+}
+
+#[derive(Clone)]
+enum UpstreamProtocol {
+    HttpConnect,
+    Socks5,
+}
+
+#[derive(Clone)]
+struct UpstreamProxy {
+    protocol: UpstreamProtocol,
+    endpoint: Endpoint,
 }
 
 #[derive(Clone)]
@@ -88,7 +100,7 @@ fn parse_args(args: Vec<String>) -> io::Result<RelayConfig> {
                 io::Error::new(io::ErrorKind::InvalidInput, "--upstream is required")
             })?;
             RelayMode::Proxy {
-                upstream: parse_http_endpoint(&upstream)?,
+                upstream: parse_upstream_proxy(&upstream)?,
             }
         }
         _ => {
@@ -117,11 +129,22 @@ fn handle_client(mut client: TcpStream, mode: RelayMode) -> io::Result<()> {
 }
 
 fn handle_via_upstream(
+    client: TcpStream,
+    request: Vec<u8>,
+    upstream: UpstreamProxy,
+) -> io::Result<()> {
+    match upstream.protocol {
+        UpstreamProtocol::HttpConnect => handle_via_http_proxy(client, request, upstream.endpoint),
+        UpstreamProtocol::Socks5 => handle_via_socks5_proxy(client, request, upstream.endpoint),
+    }
+}
+
+fn handle_via_http_proxy(
     mut client: TcpStream,
     request: Vec<u8>,
     upstream: Endpoint,
 ) -> io::Result<()> {
-    let mut upstream_stream = match TcpStream::connect((upstream.host.as_str(), upstream.port)) {
+    let mut upstream_stream = match connect_with_timeout_settings(&upstream) {
         Ok(stream) => stream,
         Err(_) => {
             write_502(&mut client)?;
@@ -144,6 +167,29 @@ fn handle_via_upstream(
     copy_response(upstream_stream, client)
 }
 
+fn handle_via_socks5_proxy(
+    mut client: TcpStream,
+    request: Vec<u8>,
+    upstream: Endpoint,
+) -> io::Result<()> {
+    let parsed = ParsedRequest::parse(&request)?;
+    let mut upstream_stream = match connect_socks5(&upstream, &parsed.endpoint) {
+        Ok(stream) => stream,
+        Err(_) => {
+            write_502(&mut client)?;
+            return Ok(());
+        }
+    };
+
+    if parsed.method.eq_ignore_ascii_case("CONNECT") {
+        client.write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")?;
+        return tunnel(client, upstream_stream);
+    }
+
+    upstream_stream.write_all(&parsed.forward_request)?;
+    copy_response(upstream_stream, client)
+}
+
 fn handle_direct(mut client: TcpStream, request: Vec<u8>) -> io::Result<()> {
     let parsed = ParsedRequest::parse(&request)?;
     let mut target = TcpStream::connect((parsed.endpoint.host.as_str(), parsed.endpoint.port))?;
@@ -157,6 +203,82 @@ fn handle_direct(mut client: TcpStream, request: Vec<u8>) -> io::Result<()> {
         target.write_all(&parsed.forward_request)?;
         copy_response(target, client)
     }
+}
+
+fn connect_with_timeout_settings(endpoint: &Endpoint) -> io::Result<TcpStream> {
+    let stream = TcpStream::connect((endpoint.host.as_str(), endpoint.port))?;
+    stream.set_read_timeout(Some(Duration::from_secs(10)))?;
+    stream.set_write_timeout(Some(Duration::from_secs(10)))?;
+    Ok(stream)
+}
+
+fn connect_socks5(upstream: &Endpoint, target: &Endpoint) -> io::Result<TcpStream> {
+    let mut stream = connect_with_timeout_settings(upstream)?;
+    stream.write_all(&[0x05, 0x01, 0x00])?;
+
+    let mut greeting = [0_u8; 2];
+    stream.read_exact(&mut greeting)?;
+    if greeting != [0x05, 0x00] {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "socks5 upstream refused no-auth method",
+        ));
+    }
+
+    let mut request = vec![0x05, 0x01, 0x00];
+    if let Ok(ip) = target.host.parse::<Ipv4Addr>() {
+        request.push(0x01);
+        request.extend_from_slice(&ip.octets());
+    } else if let Ok(ip) = target.host.parse::<Ipv6Addr>() {
+        request.push(0x04);
+        request.extend_from_slice(&ip.octets());
+    } else {
+        let host_bytes = target.host.as_bytes();
+        if host_bytes.len() > u8::MAX as usize {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "socks5 target host is too long",
+            ));
+        }
+        request.push(0x03);
+        request.push(host_bytes.len() as u8);
+        request.extend_from_slice(host_bytes);
+    }
+    request.extend_from_slice(&target.port.to_be_bytes());
+    stream.write_all(&request)?;
+
+    read_socks5_connect_response(&mut stream)?;
+    Ok(stream)
+}
+
+fn read_socks5_connect_response(stream: &mut TcpStream) -> io::Result<()> {
+    let mut head = [0_u8; 4];
+    stream.read_exact(&mut head)?;
+    if head[0] != 0x05 || head[1] != 0x00 {
+        return Err(io::Error::new(
+            io::ErrorKind::ConnectionRefused,
+            "socks5 upstream connect failed",
+        ));
+    }
+
+    let address_len = match head[3] {
+        0x01 => 4,
+        0x03 => {
+            let mut len = [0_u8; 1];
+            stream.read_exact(&mut len)?;
+            len[0] as usize
+        }
+        0x04 => 16,
+        _ => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "socks5 upstream returned invalid address type",
+            ))
+        }
+    };
+    let mut ignored = vec![0_u8; address_len + 2];
+    stream.read_exact(&mut ignored)?;
+    Ok(())
 }
 
 fn read_http_head(stream: &mut TcpStream) -> io::Result<Vec<u8>> {
@@ -184,6 +306,11 @@ fn copy_response(mut source: TcpStream, mut destination: TcpStream) -> io::Resul
 }
 
 fn tunnel(client: TcpStream, target: TcpStream) -> io::Result<()> {
+    client.set_read_timeout(None)?;
+    client.set_write_timeout(None)?;
+    target.set_read_timeout(None)?;
+    target.set_write_timeout(None)?;
+
     let mut client_reader = client.try_clone()?;
     let mut client_writer = client;
     let mut target_reader = target.try_clone()?;
@@ -270,9 +397,9 @@ impl ParsedRequest {
 }
 
 fn parse_absolute_http_target(target: &str) -> io::Result<(Endpoint, String)> {
-    let without_scheme = target
-        .strip_prefix("http://")
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "only http URLs are supported"))?;
+    let without_scheme = target.strip_prefix("http://").ok_or_else(|| {
+        io::Error::new(io::ErrorKind::InvalidData, "only http URLs are supported")
+    })?;
     let (authority, path) = match without_scheme.split_once('/') {
         Some((authority, path)) => (authority, format!("/{path}")),
         None => (without_scheme, "/".to_string()),
@@ -280,14 +407,29 @@ fn parse_absolute_http_target(target: &str) -> io::Result<(Endpoint, String)> {
     Ok((parse_host_port(authority, 80)?, path))
 }
 
-fn parse_http_endpoint(url: &str) -> io::Result<Endpoint> {
-    let without_scheme = url.strip_prefix("http://").ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "upstream must use http://host:port",
-        )
-    })?;
-    parse_host_port(without_scheme, 80)
+fn parse_upstream_proxy(url: &str) -> io::Result<UpstreamProxy> {
+    if let Some(without_scheme) = url.strip_prefix("http://") {
+        return Ok(UpstreamProxy {
+            protocol: UpstreamProtocol::HttpConnect,
+            endpoint: parse_host_port(without_scheme, 80)?,
+        });
+    }
+    if let Some(without_scheme) = url.strip_prefix("https://") {
+        return Ok(UpstreamProxy {
+            protocol: UpstreamProtocol::HttpConnect,
+            endpoint: parse_host_port(without_scheme, 443)?,
+        });
+    }
+    if let Some(without_scheme) = url.strip_prefix("socks5://") {
+        return Ok(UpstreamProxy {
+            protocol: UpstreamProtocol::Socks5,
+            endpoint: parse_host_port(without_scheme, 1080)?,
+        });
+    }
+    Err(io::Error::new(
+        io::ErrorKind::InvalidInput,
+        "upstream must use http://host:port, https://host:port, or socks5://host:port",
+    ))
 }
 
 fn parse_host_header(request: &str) -> io::Result<Endpoint> {
@@ -309,9 +451,9 @@ fn parse_host_port(value: &str, default_port: u16) -> io::Result<Endpoint> {
     let without_path = value.split('/').next().unwrap_or(value);
     let (host, port) = match without_path.rsplit_once(':') {
         Some((host, port_text)) => {
-            let port = port_text.parse::<u16>().map_err(|_| {
-                io::Error::new(io::ErrorKind::InvalidData, "invalid endpoint port")
-            })?;
+            let port = port_text
+                .parse::<u16>()
+                .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid endpoint port"))?;
             (host, port)
         }
         None => (without_path, default_port),

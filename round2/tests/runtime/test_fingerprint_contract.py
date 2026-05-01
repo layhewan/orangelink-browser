@@ -45,6 +45,24 @@ def test_automatic_language_and_timezone_can_use_geo_cache() -> None:
     assert profile.timezone == "Europe/Berlin"
 
 
+def test_automatic_language_and_timezone_can_use_config_cache() -> None:
+    from app.runtime.config import LaunchConfig
+    from app.runtime.engine_version import BrowserEngineVersion
+    from app.runtime.fingerprint import build_fingerprint_profile
+
+    profile = build_fingerprint_profile(
+        LaunchConfig(
+            name="Cached",
+            cached_language="ja-JP",
+            cached_timezone="Asia/Tokyo",
+        ),
+        actual_engine=BrowserEngineVersion(family="Chromium", major=123, full_version="123.0.0.0"),
+    )
+
+    assert profile.language == "ja-JP"
+    assert profile.timezone == "Asia/Tokyo"
+
+
 def test_fingerprint_overrides_are_applied_through_cdp() -> None:
     from app.runtime.config import LaunchConfig
     from app.runtime.engine_version import BrowserEngineVersion

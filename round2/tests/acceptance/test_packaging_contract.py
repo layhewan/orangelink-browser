@@ -10,6 +10,7 @@ def test_required_portable_paths_match_release_contract() -> None:
     assert REQUIRED_PORTABLE_PATHS == (
         "脐橙浏览器.exe",
         "Start-脐橙浏览器.bat",
+        "_internal",
         "proxy-relay.exe",
         "runtime/chromium/chrome.exe",
         "data",
@@ -57,6 +58,24 @@ def test_build_script_has_chromium_missing_message_and_readme_generation() -> No
     assert "Chromium runtime not found:" in script
     assert "runtime\\chromium" in script
     assert "README_PORTABLE.txt" in script
+
+
+def test_build_script_creates_gui_exe_and_launcher_bat() -> None:
+    script = Path("scripts/build_portable.ps1").read_text(encoding="utf-8")
+
+    assert "python -m PyInstaller" in script
+    assert "--onedir" in script
+    assert "--contents-directory _internal" in script
+    assert "--icon" in script
+    assert "app\\assets\\favicon.ico" in script
+    assert 'Remove-Item -Recurse -Force -LiteralPath (Join-Path $OutputPath "_internal")' in script
+    assert "--name orangelink-browser" in script
+    assert "orangelink-browser.exe" in script
+    assert "[char[]](0x8110, 0x6A59, 0x6D4F, 0x89C8, 0x5668)" in script
+    assert "Start-$AppDisplayName.bat" in script
+    assert "$AppDisplayName.exe" in script
+    assert "Start-Process -FilePath" in script
+    assert "Encoding ASCII" in script
 
 
 def test_release_runbook_exists_with_final_acceptance_sequence() -> None:

@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import json
-import shutil
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
 from app.runtime.config import LaunchConfig, PortablePaths
+from app.runtime.profiles import remove_tree_with_retries
 
 
 @dataclass(frozen=True)
@@ -50,12 +50,13 @@ class StateStore:
         state["configs"][config_id] = _config_to_dict(config)
         self._write_state(state)
 
-    def delete_config(self, config_id: str, *, remove_profile: bool = False) -> None:
+    def delete_config(self, config_id: str, *, remove_profile: bool = False) -> bool:
         state = self._read_state()
         state["configs"].pop(config_id, None)
         self._write_state(state)
         if remove_profile:
-            self._remove_profile_if_owned(config_id)
+            return self._remove_profile_if_owned(config_id)
+        return True
 
     def save_last_form(self, config: LaunchConfig) -> None:
         state = self._read_state()
@@ -71,23 +72,24 @@ class StateStore:
     def profile_dir_for(self, config_id: str) -> Path:
         return self.paths.profiles / f"cfg-{config_id}"
 
-    def _remove_profile_if_owned(self, config_id: str) -> None:
+    def _remove_profile_if_owned(self, config_id: str) -> bool:
         profile_dir = self.profile_dir_for(config_id)
         marker_path = profile_dir / "owner.json"
         if not marker_path.exists():
-            return
+            return False
 
         try:
             marker = json.loads(marker_path.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
-            return
+            return False
 
         if marker == {
             "owner_type": "saved_config",
             "owner_id": config_id,
             "created_by": "orangelink-browser",
         }:
-            shutil.rmtree(profile_dir)
+            return remove_tree_with_retries(profile_dir)
+        return False
 
     def _read_state(self) -> dict[str, Any]:
         if not self.state_path.exists():
