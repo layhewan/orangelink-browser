@@ -19,8 +19,8 @@ from app.runtime.profiles import ProfileHandle, ProfileManager, ProfileRuntimeLo
 from app.runtime.proxy_geo import ProxyGeoResult, enrich_config_with_proxy_geo, probe_proxy_geo
 
 
-MINIMUM_WINDOW_SIZE = (980, 680)
-USES_SCROLL_AREA = True
+MINIMUM_WINDOW_SIZE = (1320, 760)
+USES_SCROLL_AREA = False
 
 MAIN_WINDOW_SECTIONS = (
     "configuration_editor",
@@ -78,9 +78,9 @@ ZH_UI_STRINGS = {
     "os_fingerprint": "系统指纹",
     "extension_support": "扩展支持",
     "launch_current_form": "启动当前配置",
-    "save_config": "保存配置",
+    "save_config": "保存为新环境",
     "create_config": "新建配置",
-    "duplicate_config": "复制配置",
+    "duplicate_config": "复制为新环境",
     "delete_config": "删除配置",
     "delete_profile_data": "删除浏览器数据",
     "saved_configurations": "已保存配置",
@@ -147,7 +147,6 @@ def create_main_window(
         QListWidgetItem,
         QMainWindow,
         QPushButton,
-        QScrollArea,
         QVBoxLayout,
         QWidget,
     )
@@ -167,14 +166,15 @@ def create_main_window(
     if icon_path.exists():
         window.setWindowIcon(QIcon(str(icon_path)))
     window.setMinimumSize(*MINIMUM_WINDOW_SIZE)
+    window.resize(*MINIMUM_WINDOW_SIZE)
     window.setStyleSheet(_desktop_stylesheet())
     running_sessions: list[object] = []
     running_saved_config_ids: set[str] = set()
 
     content = QWidget()
     shell = QHBoxLayout(content)
-    shell.setContentsMargins(18, 18, 18, 18)
-    shell.setSpacing(16)
+    shell.setContentsMargins(16, 16, 16, 16)
+    shell.setSpacing(14)
 
     sidebar = QFrame()
     sidebar.setObjectName("sidebar")
@@ -229,7 +229,7 @@ def create_main_window(
     main_panel = QFrame()
     main_panel.setObjectName("main_panel")
     layout = QVBoxLayout(main_panel)
-    layout.setContentsMargins(18, 18, 18, 18)
+    layout.setContentsMargins(16, 16, 16, 16)
     layout.setSpacing(12)
     section_title = QLabel("环境工作台")
     section_title.setObjectName("section_title")
@@ -261,7 +261,7 @@ def create_main_window(
 
     network_section, network_layout = section("network_section", "网络")
     fingerprint_section, fingerprint_layout = section("fingerprint_section", "指纹")
-    launch_section, launch_layout = section("launch_section", "启动与会话")
+    launch_section, launch_layout = section("session_section", "启动与会话")
 
     network_form = QFormLayout()
     network_form.setLabelAlignment(Qt.AlignRight)
@@ -314,8 +314,6 @@ def create_main_window(
     fingerprint_form.addRow(ZH_UI_STRINGS["os_fingerprint"], os_fingerprint)
     fingerprint_form.addRow("", extension_support)
     fingerprint_layout.addLayout(fingerprint_form)
-    layout.addWidget(network_section)
-    layout.addWidget(fingerprint_section)
 
     launch_button = QPushButton(ZH_UI_STRINGS["launch_current_form"])
     launch_button.setObjectName("launch_current_form")
@@ -338,7 +336,15 @@ def create_main_window(
     session_list.setObjectName("running_sessions")
     launch_layout.addWidget(session_list)
     launch_layout.addWidget(status_label)
-    layout.addWidget(launch_section, 1)
+    body_layout = QHBoxLayout()
+    body_layout.setSpacing(12)
+    editor_column = QVBoxLayout()
+    editor_column.setSpacing(12)
+    editor_column.addWidget(network_section, 1)
+    editor_column.addWidget(fingerprint_section, 1)
+    body_layout.addLayout(editor_column, 2)
+    body_layout.addWidget(launch_section, 1)
+    layout.addLayout(body_layout, 1)
     shell.addWidget(main_panel, 1)
 
     def current_form() -> LaunchConfigForm:
@@ -423,14 +429,10 @@ def create_main_window(
         )
         if duplicate:
             config = replace(config, name=f"{config.name} 副本")
-        config_id = None if duplicate else selected_config_id()
-        if config_id is None:
-            saved = store.save_config(config)
-            config_id = saved.config_id
-        else:
-            store.update_config(config_id, config)
+        saved = store.save_config(config)
+        config_id = saved.config_id
         refresh_config_list(select_id=config_id)
-        status_label.setText("配置已保存")
+        status_label.setText("已保存为新环境")
         return config_id
 
     def on_delete_config(*, remove_profile: bool = False) -> None:
@@ -465,7 +467,9 @@ def create_main_window(
             return
 
         config_id = selected_config_id()
-        if config_id is not None and config_id in running_saved_config_ids:
+        selected_config = store.load_config(config_id) if config_id is not None else None
+        dirty_selected_config = selected_config is not None and validation.config != selected_config
+        if config_id is not None and not dirty_selected_config and config_id in running_saved_config_ids:
             status_label.setText("该配置已在运行中")
             return
         launch_config = _enrich_config_with_status(
@@ -473,7 +477,13 @@ def create_main_window(
             status_label=status_label,
             geo_probe=geo_probe,
         )
-        if config_id is not None and launch_config != validation.config:
+        auto_saved_for_launch = False
+        if config_id is not None and dirty_selected_config:
+            saved = store.save_config(launch_config)
+            config_id = saved.config_id
+            refresh_config_list(select_id=config_id)
+            auto_saved_for_launch = True
+        elif config_id is not None and launch_config != validation.config:
             store.update_config(config_id, launch_config)
         handler = launch_handler or _launch_browser_session
         try:
@@ -498,7 +508,7 @@ def create_main_window(
         session_list.addItem(session_item)
         session_summary.setText(f"运行中: {len(running_sessions)}")
         workspace_status.setText(f"{len(running_sessions)} 个会话")
-        status_label.setText("会话已启动")
+        status_label.setText("已另存新环境并启动" if auto_saved_for_launch else "会话已启动")
 
     def on_stop_selected() -> None:
         row = session_list.currentRow()
@@ -539,10 +549,7 @@ def create_main_window(
     window._orangelink_sessions = running_sessions
     window._orangelink_shutdown = on_stop_all
 
-    scroll = QScrollArea()
-    scroll.setWidgetResizable(True)
-    scroll.setWidget(content)
-    window.setCentralWidget(scroll)
+    window.setCentralWidget(content)
     return window
 
 
@@ -677,107 +684,124 @@ def _asset_icon_path() -> Path:
 def _desktop_stylesheet() -> str:
     return """
     QMainWindow {
-        background: #eef3f1;
-        color: #26312d;
+        background: #151720;
+        color: #e8edf6;
         font-family: "Segoe UI", "Microsoft YaHei UI", sans-serif;
         font-size: 13px;
     }
     QFrame#sidebar {
-        background: #dfe8e3;
-        border: 1px solid #bdcbc4;
+        background: #1b2030;
+        border: 1px solid #30384a;
         border-radius: 8px;
-        min-width: 270px;
-        max-width: 320px;
+        min-width: 300px;
+        max-width: 330px;
     }
     QFrame#main_panel {
-        background: #f8faf8;
-        border: 1px solid #cad7d0;
+        background: #191e2b;
+        border: 1px solid #30384a;
         border-radius: 8px;
     }
     QFrame#workspace_header,
     QFrame#network_section,
     QFrame#fingerprint_section,
-    QFrame#launch_section {
-        background: #fbfcfa;
-        border: 1px solid #d5dfd9;
+    QFrame#session_section {
+        background: #202638;
+        border: 1px solid #354058;
         border-radius: 8px;
     }
     QLabel#app_title {
         font-size: 22px;
         font-weight: 700;
+        color: #f2f6ff;
     }
     QLabel#app_subtitle, QLabel#data_hint, QLabel#diagnostic_log, QLabel#environment_count {
-        color: #5d6b66;
+        color: #a8b3c7;
     }
     QLabel#section_title {
         font-size: 18px;
         font-weight: 650;
+        color: #f2f6ff;
     }
     QLabel#workspace_title {
         font-size: 15px;
         font-weight: 650;
-        color: #24302b;
+        color: #f2f6ff;
     }
     QLabel#workspace_status {
-        color: #1e6b64;
-        background: #e1efeb;
-        border: 1px solid #b8d4cd;
+        color: #7de0d2;
+        background: #162d34;
+        border: 1px solid #246a70;
         border-radius: 6px;
         padding: 4px 10px;
     }
     QLabel#section_label {
         font-size: 14px;
         font-weight: 650;
-        color: #26312d;
+        color: #f2f6ff;
+    }
+    QLabel {
+        color: #e8edf6;
+    }
+    QCheckBox {
+        color: #e8edf6;
+        spacing: 8px;
     }
     QListWidget {
-        background: #f8faf8;
-        border: 1px solid #c7d3cd;
+        background: #151a26;
+        border: 1px solid #354058;
         border-radius: 6px;
         outline: 0;
+        color: #e8edf6;
     }
     QListWidget#saved_configurations::item,
     QListWidget#running_sessions::item {
         min-height: 44px;
         padding: 8px;
         border-radius: 6px;
-        color: #26312d;
+        color: #e8edf6;
     }
     QListWidget#saved_configurations::item:selected,
     QListWidget#running_sessions::item:selected {
-        background: #d9e8e4;
-        color: #163d39;
+        background: #263d58;
+        color: #f4f8ff;
     }
     QLineEdit, QSpinBox, QComboBox {
         min-height: 30px;
         padding: 4px 8px;
-        border: 1px solid #b8c8c1;
+        border: 1px solid #445069;
         border-radius: 6px;
-        background: #fcfdfb;
+        background: #151a26;
+        color: #f2f6ff;
     }
     QLineEdit:focus, QSpinBox:focus, QComboBox:focus {
-        border: 1px solid #24756c;
+        border: 1px solid #3fb6d8;
+    }
+    QComboBox QAbstractItemView {
+        background: #151a26;
+        color: #f2f6ff;
+        selection-background-color: #263d58;
+        border: 1px solid #445069;
     }
     QPushButton {
         min-height: 32px;
         padding: 4px 12px;
         border-radius: 6px;
-        border: 1px solid #aebdb6;
-        background: #e8eeeb;
-        color: #26312d;
+        border: 1px solid #47536b;
+        background: #252c3e;
+        color: #e8edf6;
     }
     QPushButton:hover {
-        background: #dde8e3;
+        background: #30394d;
     }
     QPushButton#launch_current_form {
-        color: #f7fbfa;
-        background: #276b93;
-        border-color: #215b7d;
+        color: #f7fbff;
+        background: #2377a8;
+        border-color: #2f9ccc;
     }
     QPushButton#delete_config, QPushButton#delete_profile_data {
-        color: #7b2d28;
-        border-color: #d5b2ad;
-        background: #f2e8e5;
+        color: #ffd4cf;
+        border-color: #79453f;
+        background: #3a2428;
     }
     """
 

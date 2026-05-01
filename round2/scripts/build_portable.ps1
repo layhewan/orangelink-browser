@@ -13,7 +13,13 @@ $OutputPath = Join-Path $RepoRoot $OutputDir
 $DataPath = Join-Path $OutputPath "data"
 $RuntimePath = Join-Path $OutputPath "runtime"
 $AppDisplayName = -join ([char[]](0x8110, 0x6A59, 0x6D4F, 0x89C8, 0x5668))
-$ChromiumSource = Join-Path $RepoRoot "runtime\chromium"
+$OfficialChromeSource = Join-Path $RepoRoot "chrome-win64"
+$BundledChromiumSource = Join-Path $RepoRoot "runtime\chromium"
+$ChromiumSource = if (Test-Path (Join-Path $OfficialChromeSource "chrome.exe")) {
+    $OfficialChromeSource
+} else {
+    $BundledChromiumSource
+}
 $ChromiumExecutable = Join-Path $ChromiumSource "chrome.exe"
 $ReportPath = if ($ValidationReportPath) {
     $ValidationReportPath
@@ -28,10 +34,12 @@ Remove-Item -Force -LiteralPath (Join-Path $OutputPath "orangelink-browser.exe")
 Remove-Item -Force -LiteralPath (Join-Path $OutputPath "$AppDisplayName.exe") -ErrorAction SilentlyContinue
 
 if (-not (Test-Path $ChromiumExecutable)) {
-    throw "Chromium runtime not found: $ChromiumSource. Place a compatible Chromium build under runtime\chromium before packaging."
+    throw "Chromium runtime not found: $BundledChromiumSource. Place official Chrome under chrome-win64 or a compatible Chromium build under runtime\chromium before packaging."
 }
 
-Copy-Item -Recurse -Force -Path $ChromiumSource -Destination $RuntimePath
+$PackagedChromiumPath = Join-Path $RuntimePath "chromium"
+Remove-Item -Recurse -Force -LiteralPath $PackagedChromiumPath -ErrorAction SilentlyContinue
+Copy-Item -Recurse -Force -Path $ChromiumSource -Destination $PackagedChromiumPath
 
 $RelayManifest = Join-Path $RepoRoot "relay\Cargo.toml"
 $RelayOutput = Join-Path $RepoRoot "relay\target\release\proxy-relay.exe"

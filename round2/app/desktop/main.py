@@ -23,6 +23,7 @@ def run_desktop_gui(
         _emit_status("缺少 PySide6，无法启动桌面界面。")
         return 2
 
+    _set_windows_app_user_model_id()
     app = QApplication.instance() or QApplication(sys.argv)
     window = create_main_window(launch_handler=launch_handler)
     if smoke:
@@ -91,3 +92,14 @@ def _wait_for_cdp_version(port: int, timeout_s: float) -> bool:
 def _emit_status(message: str) -> None:
     if sys.stdout is not None:
         print(message)
+
+
+def _set_windows_app_user_model_id() -> None:
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Orangelink.Browser")
+    except Exception:
+        return

@@ -15,6 +15,17 @@ def test_proxy_geo_result_maps_ip_api_timezone_and_language() -> None:
     )
 
 
+def test_proxy_geo_keeps_hong_kong_as_web_visible_locale() -> None:
+    from app.runtime.proxy_geo import parse_ip_api_payload
+
+    result = parse_ip_api_payload(
+        b'{"status":"success","countryCode":"HK","timezone":"Asia/Hong_Kong","query":"203.0.113.20"}'
+    )
+
+    assert result is not None
+    assert result.language == "zh-HK"
+
+
 def test_proxy_geo_result_rejects_failed_payload() -> None:
     from app.runtime.proxy_geo import parse_ip_api_payload
 
