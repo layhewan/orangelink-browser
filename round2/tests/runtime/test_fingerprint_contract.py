@@ -66,6 +66,37 @@ def test_automatic_language_and_timezone_can_use_config_cache() -> None:
     assert profile.timezone == "Asia/Tokyo"
 
 
+def test_language_cache_is_normalized_before_building_headers() -> None:
+    from app.runtime.config import LaunchConfig
+    from app.runtime.engine_version import BrowserEngineVersion
+    from app.runtime.fingerprint import build_fingerprint_profile
+
+    profile = build_fingerprint_profile(
+        LaunchConfig(
+            name="Cached",
+            proxy_enabled=True,
+            proxy_host="127.0.0.1",
+            proxy_port=7897,
+            cached_language="en-US,en;q=0.9",
+        ),
+        actual_engine=BrowserEngineVersion(family="Chromium", major=123, full_version="123.0.0.0"),
+    )
+
+    assert profile.language == "en-US"
+    assert profile.accept_language == "en-US,en;q=0.9"
+    assert ";q=0.9;q=0.9" not in profile.accept_language
+
+
+def test_manual_language_accepts_lowercase_country_and_canonicalizes() -> None:
+    from app.runtime.config import LaunchConfig
+
+    assert LaunchConfig(
+        name="Manual",
+        automatic_language=False,
+        manual_language="en-us",
+    ).manual_language == "en-US"
+
+
 def test_direct_mode_ignores_stale_proxy_geo_cache() -> None:
     from app.runtime.config import LaunchConfig
     from app.runtime.engine_version import BrowserEngineVersion

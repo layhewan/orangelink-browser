@@ -49,7 +49,7 @@ class BrowserFingerprintController:
             start_session_id = apply_existing_page_targets(connection, self._profile)
             enable_target_auto_attach(connection)
             if start_session_id is not None:
-                connection.navigate(start_session_id, self._start_url)
+                navigate_start_page(connection, start_session_id, self._start_url)
             set_timeout = getattr(connection, "set_timeout", None)
             if callable(set_timeout):
                 set_timeout(0.5)
@@ -85,6 +85,13 @@ def apply_existing_page_targets(cdp: Any, profile: FingerprintProfile) -> str | 
             first_page_session = page.session_id
 
     return first_page_session
+
+
+def navigate_start_page(cdp: Any, session_id: str, start_url: str) -> None:
+    try:
+        cdp.navigate(session_id, start_url)
+    except TimeoutError:
+        return
 
 
 def enable_target_auto_attach(cdp: Any) -> None:

@@ -8,7 +8,7 @@ from pathlib import Path
 
 ALLOWED_PROXY_PROTOCOLS = frozenset({"http", "https", "socks5"})
 DEFAULT_START_PAGE = "orangelink://homepage"
-LANGUAGE_RE = re.compile(r"^[a-z]{2}(?:-[A-Z]{2})?$")
+RAW_LANGUAGE_RE = re.compile(r"^(?P<language>[A-Za-z]{2})(?:[-_](?P<region>[A-Za-z]{2}))?$")
 
 
 class ValidationError(ValueError):
@@ -53,8 +53,15 @@ class LaunchConfig:
             if self.proxy_port is None or not 1 <= int(self.proxy_port) <= 65535:
                 raise ValidationError("代理端口必须在 1 到 65535 之间")
 
-        if not self.automatic_language and not LANGUAGE_RE.fullmatch(self.manual_language):
+        manual_language = normalize_language_tag(self.manual_language, fallback="")
+        if not self.automatic_language and not manual_language:
             raise ValidationError("手动语言必须类似 en 或 en-US")
+        object.__setattr__(self, "manual_language", manual_language or "en-US")
+        object.__setattr__(
+            self,
+            "cached_language",
+            normalize_language_tag(self.cached_language, fallback=""),
+        )
 
         if not self.automatic_timezone and not self.manual_timezone.strip():
             raise ValidationError("手动时区不能为空")
@@ -109,3 +116,16 @@ def _default_base() -> Path:
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent
     return Path(__file__).resolve().parents[2]
+
+
+def normalize_language_tag(value: str, *, fallback: str = "") -> str:
+    candidate = str(value or "").split(",", 1)[0].split(";", 1)[0].strip().replace("_", "-")
+    match = RAW_LANGUAGE_RE.fullmatch(candidate)
+    if match is None:
+        return fallback
+
+    language = match.group("language").lower()
+    region = match.group("region")
+    if region is None:
+        return language
+    return f"{language}-{region.upper()}"

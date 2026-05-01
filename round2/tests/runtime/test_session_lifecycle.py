@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 
 class FakeLauncher:
     def __init__(self) -> None:
@@ -68,3 +70,29 @@ def test_stop_one_session_does_not_stop_unrelated_sessions() -> None:
     assert manager.sessions[first.session_id].status == "stopped"
     assert manager.sessions[second.session_id].status == "running"
     assert len(launcher.stopped) == 1
+
+
+def test_stop_all_attempts_later_sessions_when_one_stop_fails() -> None:
+    from app.runtime.config import LaunchConfig
+    from app.runtime.session_manager import SessionManager
+
+    class FailingFirstStopLauncher(FakeLauncher):
+        def stop(self, launch_result) -> None:
+            super().stop(launch_result)
+            if len(self.stopped) == 1:
+                raise RuntimeError("stop failed")
+
+    launcher = FailingFirstStopLauncher()
+    manager = SessionManager(launcher=launcher, readiness_probe=lambda launch: True)
+    first = manager.launch(LaunchConfig(name="One"), start_url="https://one.test/")
+    second = manager.launch(LaunchConfig(name="Two"), start_url="https://two.test/")
+
+    with pytest.raises(RuntimeError):
+        manager.stop_all()
+
+    assert launcher.stopped == [
+        "data\\profiles\\session-1",
+        "data\\profiles\\session-2",
+    ]
+    assert manager.sessions[first.session_id].status == "stopped"
+    assert manager.sessions[second.session_id].status == "stopped"

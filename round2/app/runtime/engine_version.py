@@ -38,6 +38,14 @@ def parse_chromium_version_output(output: str) -> BrowserEngineVersion:
 
 
 def read_chromium_version(chrome_executable: Path) -> BrowserEngineVersion:
+    file_version = _read_windows_file_version(chrome_executable)
+    if file_version:
+        return BrowserEngineVersion(
+            family="Chromium",
+            major=int(file_version.split(".", 1)[0]),
+            full_version=file_version,
+        )
+
     try:
         result = subprocess.run(
             [str(chrome_executable), "--version"],

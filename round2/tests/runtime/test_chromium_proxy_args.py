@@ -70,15 +70,44 @@ def test_chromium_launch_sets_process_language_from_cached_proxy_language() -> N
     from app.runtime.config import LaunchConfig
 
     args = build_chromium_args(
-        config=LaunchConfig(name="US Proxy", cached_language="en-US"),
+        config=LaunchConfig(
+            name="US Proxy",
+            proxy_enabled=True,
+            proxy_host="127.0.0.1",
+            proxy_port=7897,
+            cached_language="en-US",
+        ),
         chrome_executable=Path("runtime/chromium/chrome.exe"),
         profile_dir=Path("data/profiles/session-1"),
         remote_debugging_port=9222,
-        relay_port=None,
+        relay_port=45678,
         start_url="https://example.test/",
     )
 
     assert "--lang=en-US" in args
+
+
+def test_chromium_launch_sanitizes_cached_accept_language_value() -> None:
+    from app.runtime.chromium_launcher import build_chromium_args
+    from app.runtime.config import LaunchConfig
+
+    args = build_chromium_args(
+        config=LaunchConfig(
+            name="US Proxy",
+            proxy_enabled=True,
+            proxy_host="127.0.0.1",
+            proxy_port=7897,
+            cached_language="en-US,en;q=0.9",
+        ),
+        chrome_executable=Path("runtime/chromium/chrome.exe"),
+        profile_dir=Path("data/profiles/session-1"),
+        remote_debugging_port=9222,
+        relay_port=45678,
+        start_url="https://example.test/",
+    )
+
+    assert "--lang=en-US" in args
+    assert not any(";q=" in arg for arg in args if arg.startswith("--lang="))
 
 
 def test_direct_launch_ignores_stale_cached_proxy_language() -> None:

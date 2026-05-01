@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from app.runtime.config import LaunchConfig
+from app.runtime.config import LaunchConfig, normalize_language_tag
 from app.runtime.engine_version import BrowserEngineVersion
 
 
@@ -51,11 +51,13 @@ def build_fingerprint_profile(
     geo_cache = proxy_geo_cache or {}
     cached_language = config.cached_language if config.proxy_enabled else ""
     cached_timezone = config.cached_timezone if config.proxy_enabled else ""
-    language = (
-        geo_cache.get("language") or cached_language
-        if config.automatic_language
-        else config.manual_language
-    ) or config.manual_language
+    raw_language = config.manual_language
+    if config.automatic_language:
+        raw_language = geo_cache.get("language") or cached_language or config.manual_language
+    language = normalize_language_tag(
+        raw_language,
+        fallback=config.manual_language,
+    )
     timezone = (
         geo_cache.get("timezone") or cached_timezone
         if config.automatic_timezone
@@ -123,6 +125,7 @@ def apply_fingerprint_overrides(cdp: Any, session_id: str, profile: FingerprintP
 
 
 def _accept_language(language: str) -> str:
+    language = normalize_language_tag(language, fallback="en-US")
     if "-" not in language:
         return language
     base = language.split("-", 1)[0]

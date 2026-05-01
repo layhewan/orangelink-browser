@@ -15,7 +15,7 @@ from app.runtime.config import LaunchConfig, resolve_portable_paths
 from app.runtime.engine_version import read_chromium_version
 from app.runtime.fingerprint import build_fingerprint_profile
 from app.runtime.fingerprint_controller import BrowserFingerprintController
-from app.runtime.profiles import ProfileHandle, ProfileManager
+from app.runtime.profiles import ProfileHandle, ProfileManager, ProfileRuntimeLock
 from app.runtime.proxy_geo import ProxyGeoResult, enrich_config_with_proxy_geo, probe_proxy_geo
 
 
@@ -102,13 +102,28 @@ class DesktopLaunchedSession:
     profile: ProfileHandle | None = None
     saved_config_id: str | None = None
     fingerprint_controller: BrowserFingerprintController | None = None
+    profile_lock: ProfileRuntimeLock | None = None
 
     def stop(self) -> None:
-        if self.fingerprint_controller is not None:
-            self.fingerprint_controller.stop()
-        self.launcher.stop(self.launch_result)
-        if self.profile_manager is not None and self.profile is not None:
-            self.profile_manager.cleanup_temporary(self.profile)
+        stop_error: Exception | None = None
+        try:
+            if self.fingerprint_controller is not None:
+                self.fingerprint_controller.stop()
+        except Exception as exc:
+            stop_error = exc
+        try:
+            self.launcher.stop(self.launch_result)
+        except Exception as exc:
+            if stop_error is None:
+                stop_error = exc
+        finally:
+            if self.profile_lock is not None:
+                self.profile_lock.release()
+                self.profile_lock = None
+            if self.profile_manager is not None and self.profile is not None:
+                self.profile_manager.cleanup_temporary(self.profile)
+        if stop_error is not None:
+            raise stop_error
 
 
 def create_main_window(
@@ -139,7 +154,14 @@ def create_main_window(
 
     paths = resolve_portable_paths(create=True)
     store = state_store or StateStore(paths)
-    window = QMainWindow()
+    class OrangelinkMainWindow(QMainWindow):
+        def closeEvent(self, event) -> None:
+            shutdown = getattr(self, "_orangelink_shutdown", None)
+            if callable(shutdown):
+                shutdown()
+            super().closeEvent(event)
+
+    window = OrangelinkMainWindow()
     window.setWindowTitle(ZH_UI_STRINGS["window_title"])
     icon_path = _asset_icon_path()
     if icon_path.exists():
@@ -160,7 +182,7 @@ def create_main_window(
     sidebar_layout.setContentsMargins(16, 16, 16, 16)
     title = QLabel(ZH_UI_STRINGS["window_title"])
     title.setObjectName("app_title")
-    subtitle = QLabel("代理会话工作台")
+    subtitle = QLabel("环境工作台")
     subtitle.setObjectName("app_subtitle")
     sidebar_layout.addWidget(title)
     sidebar_layout.addWidget(subtitle)
@@ -176,7 +198,10 @@ def create_main_window(
     data_hint.setWordWrap(True)
     sidebar_layout.addWidget(data_hint)
     sidebar_layout.addSpacing(12)
-    sidebar_layout.addWidget(QLabel(ZH_UI_STRINGS["saved_configurations"]))
+    sidebar_layout.addWidget(QLabel("浏览器环境"))
+    environment_count = QLabel("0 个环境")
+    environment_count.setObjectName("environment_count")
+    sidebar_layout.addWidget(environment_count)
     config_list = QListWidget()
     config_list.setObjectName("saved_configurations")
     sidebar_layout.addWidget(config_list, 1)
@@ -206,12 +231,42 @@ def create_main_window(
     layout = QVBoxLayout(main_panel)
     layout.setContentsMargins(18, 18, 18, 18)
     layout.setSpacing(12)
-    section_title = QLabel(ZH_UI_STRINGS["configuration_editor"])
+    section_title = QLabel("环境工作台")
     section_title.setObjectName("section_title")
     layout.addWidget(section_title)
 
-    form_layout = QFormLayout()
-    form_layout.setLabelAlignment(Qt.AlignRight)
+    workspace_header = QFrame()
+    workspace_header.setObjectName("workspace_header")
+    workspace_header_layout = QHBoxLayout(workspace_header)
+    workspace_header_layout.setContentsMargins(14, 12, 14, 12)
+    workspace_header_layout.setSpacing(12)
+    workspace_title = QLabel("代理、指纹、数据隔离")
+    workspace_title.setObjectName("workspace_title")
+    workspace_status = QLabel("就绪")
+    workspace_status.setObjectName("workspace_status")
+    workspace_header_layout.addWidget(workspace_title, 1)
+    workspace_header_layout.addWidget(workspace_status, 0)
+    layout.addWidget(workspace_header)
+
+    def section(object_name: str, title_text: str) -> tuple[QFrame, QVBoxLayout]:
+        frame = QFrame()
+        frame.setObjectName(object_name)
+        body = QVBoxLayout(frame)
+        body.setContentsMargins(14, 12, 14, 14)
+        body.setSpacing(10)
+        label = QLabel(title_text)
+        label.setObjectName("section_label")
+        body.addWidget(label)
+        return frame, body
+
+    network_section, network_layout = section("network_section", "网络")
+    fingerprint_section, fingerprint_layout = section("fingerprint_section", "指纹")
+    launch_section, launch_layout = section("launch_section", "启动与会话")
+
+    network_form = QFormLayout()
+    network_form.setLabelAlignment(Qt.AlignRight)
+    fingerprint_form = QFormLayout()
+    fingerprint_form.setLabelAlignment(Qt.AlignRight)
     config_name = QLineEdit("默认配置")
     config_name.setObjectName("config_name")
     start_page = QLineEdit("https://www.google.com/search?q=orangelink")
@@ -244,19 +299,23 @@ def create_main_window(
     extension_support.setObjectName("extension_support")
     extension_support.setChecked(True)
 
-    form_layout.addRow(ZH_UI_STRINGS["config_name"], config_name)
-    form_layout.addRow(ZH_UI_STRINGS["start_page"], start_page)
-    form_layout.addRow("", proxy_enabled)
-    form_layout.addRow(ZH_UI_STRINGS["proxy_protocol"], proxy_protocol)
-    form_layout.addRow(ZH_UI_STRINGS["proxy_host"], proxy_host)
-    form_layout.addRow(ZH_UI_STRINGS["proxy_port"], proxy_port)
-    form_layout.addRow("", automatic_language)
-    form_layout.addRow(ZH_UI_STRINGS["manual_language"], manual_language)
-    form_layout.addRow("", automatic_timezone)
-    form_layout.addRow(ZH_UI_STRINGS["manual_timezone"], manual_timezone)
-    form_layout.addRow(ZH_UI_STRINGS["os_fingerprint"], os_fingerprint)
-    form_layout.addRow("", extension_support)
-    layout.addLayout(form_layout)
+    network_form.addRow(ZH_UI_STRINGS["config_name"], config_name)
+    network_form.addRow(ZH_UI_STRINGS["start_page"], start_page)
+    network_form.addRow("", proxy_enabled)
+    network_form.addRow(ZH_UI_STRINGS["proxy_protocol"], proxy_protocol)
+    network_form.addRow(ZH_UI_STRINGS["proxy_host"], proxy_host)
+    network_form.addRow(ZH_UI_STRINGS["proxy_port"], proxy_port)
+    network_layout.addLayout(network_form)
+
+    fingerprint_form.addRow("", automatic_language)
+    fingerprint_form.addRow(ZH_UI_STRINGS["manual_language"], manual_language)
+    fingerprint_form.addRow("", automatic_timezone)
+    fingerprint_form.addRow(ZH_UI_STRINGS["manual_timezone"], manual_timezone)
+    fingerprint_form.addRow(ZH_UI_STRINGS["os_fingerprint"], os_fingerprint)
+    fingerprint_form.addRow("", extension_support)
+    fingerprint_layout.addLayout(fingerprint_form)
+    layout.addWidget(network_section)
+    layout.addWidget(fingerprint_section)
 
     launch_button = QPushButton(ZH_UI_STRINGS["launch_current_form"])
     launch_button.setObjectName("launch_current_form")
@@ -264,18 +323,22 @@ def create_main_window(
     probe_button.setObjectName("probe_proxy")
     stop_all_button = QPushButton(ZH_UI_STRINGS["stop_all"])
     stop_all_button.setObjectName("stop_all")
+    stop_selected_button = QPushButton(ZH_UI_STRINGS["stop_selected"])
+    stop_selected_button.setObjectName("stop_selected")
     status_label = QLabel("就绪")
     status_label.setObjectName("diagnostic_log")
     action_row = QGridLayout()
     action_row.addWidget(probe_button, 0, 0)
     action_row.addWidget(launch_button, 0, 1)
     action_row.addWidget(stop_all_button, 0, 2)
-    layout.addLayout(action_row)
-    layout.addWidget(QLabel(ZH_UI_STRINGS["running_sessions"]))
+    action_row.addWidget(stop_selected_button, 1, 0, 1, 3)
+    launch_layout.addLayout(action_row)
+    launch_layout.addWidget(QLabel(ZH_UI_STRINGS["running_sessions"]))
     session_list = QListWidget()
     session_list.setObjectName("running_sessions")
-    layout.addWidget(session_list)
-    layout.addWidget(status_label)
+    launch_layout.addWidget(session_list)
+    launch_layout.addWidget(status_label)
+    layout.addWidget(launch_section, 1)
     shell.addWidget(main_panel, 1)
 
     def current_form() -> LaunchConfigForm:
@@ -328,12 +391,13 @@ def create_main_window(
         config_list.blockSignals(True)
         config_list.clear()
         for saved in store.list_configs():
-            item = QListWidgetItem(saved.config.name)
+            item = QListWidgetItem(_config_list_text(saved.config))
             item.setData(Qt.UserRole, saved.config_id)
             config_list.addItem(item)
             if select_id == saved.config_id:
                 config_list.setCurrentItem(item)
         config_list.blockSignals(False)
+        environment_count.setText(f"{config_list.count()} 个环境")
 
     def on_config_selected() -> None:
         config_id = selected_config_id()
@@ -373,6 +437,9 @@ def create_main_window(
         config_id = selected_config_id()
         if config_id is None:
             status_label.setText("请先选择配置")
+            return
+        if config_id in running_saved_config_ids:
+            status_label.setText("请先停止该环境再删除")
             return
         profile_removed = store.delete_config(config_id, remove_profile=remove_profile)
         refresh_config_list()
@@ -424,11 +491,13 @@ def create_main_window(
         if config_id is not None:
             running_saved_config_ids.add(config_id)
         session_item = QListWidgetItem(
-            f"{launch_config.name}  {getattr(session, 'session_id', len(running_sessions))}"
+            f"{launch_config.name}\n"
+            f"{getattr(session, 'session_id', len(running_sessions))} · {_config_summary(launch_config)}"
         )
         session_item.setData(Qt.UserRole, id(session))
         session_list.addItem(session_item)
         session_summary.setText(f"运行中: {len(running_sessions)}")
+        workspace_status.setText(f"{len(running_sessions)} 个会话")
         status_label.setText("会话已启动")
 
     def on_stop_selected() -> None:
@@ -443,6 +512,7 @@ def create_main_window(
             running_saved_config_ids.discard(saved_id)
         session_list.takeItem(row)
         session_summary.setText(f"运行中: {len(running_sessions)}" if running_sessions else "未启动")
+        workspace_status.setText(f"{len(running_sessions)} 个会话" if running_sessions else "就绪")
         status_label.setText("会话已停止")
 
     def on_stop_all() -> None:
@@ -452,6 +522,7 @@ def create_main_window(
         running_saved_config_ids.clear()
         session_list.clear()
         session_summary.setText("未启动")
+        workspace_status.setText("就绪")
         status_label.setText("全部会话已停止")
 
     refresh_config_list()
@@ -463,12 +534,10 @@ def create_main_window(
     delete_data_button.clicked.connect(lambda: on_delete_config(remove_profile=True))
     probe_button.clicked.connect(on_probe_proxy)
     launch_button.clicked.connect(on_launch)
-    stop_selected_button = QPushButton(ZH_UI_STRINGS["stop_selected"])
-    stop_selected_button.setObjectName("stop_selected")
-    action_row.addWidget(stop_selected_button, 1, 0, 1, 3)
     stop_selected_button.clicked.connect(on_stop_selected)
     stop_all_button.clicked.connect(on_stop_all)
     window._orangelink_sessions = running_sessions
+    window._orangelink_shutdown = on_stop_all
 
     scroll = QScrollArea()
     scroll.setWidgetResizable(True)
@@ -556,7 +625,10 @@ def _invoke_launch_handler(
 def _stop_session(session: object) -> None:
     stop = getattr(session, "stop", None)
     if callable(stop):
-        stop()
+        try:
+            stop()
+        except Exception:
+            return
 
 
 def _enrich_config_with_status(
@@ -575,6 +647,29 @@ def _enrich_config_with_status(
     return enriched
 
 
+def _config_list_text(config: LaunchConfig) -> str:
+    return f"{config.name}\n{_config_summary(config)}"
+
+
+def _config_summary(config: LaunchConfig) -> str:
+    if config.proxy_enabled:
+        proxy = f"{config.proxy_protocol}://{config.proxy_host}:{config.proxy_port}"
+    else:
+        proxy = "直连"
+
+    language = (
+        config.cached_language
+        if config.automatic_language and config.cached_language
+        else config.manual_language
+    )
+    timezone = (
+        config.cached_timezone
+        if config.automatic_timezone and config.cached_timezone
+        else config.manual_timezone
+    )
+    return f"{proxy} · {language} · {timezone}"
+
+
 def _asset_icon_path() -> Path:
     return Path(__file__).resolve().parents[1] / "assets" / "favicon.ico"
 
@@ -582,58 +677,107 @@ def _asset_icon_path() -> Path:
 def _desktop_stylesheet() -> str:
     return """
     QMainWindow {
-        background: #f5f7f8;
-        color: #2f3a42;
+        background: #eef3f1;
+        color: #26312d;
         font-family: "Segoe UI", "Microsoft YaHei UI", sans-serif;
         font-size: 13px;
     }
     QFrame#sidebar {
-        background: #e8edf1;
-        border: 1px solid #cbd5dc;
+        background: #dfe8e3;
+        border: 1px solid #bdcbc4;
         border-radius: 8px;
-        min-width: 250px;
-        max-width: 300px;
+        min-width: 270px;
+        max-width: 320px;
     }
     QFrame#main_panel {
-        background: #fbfcfc;
-        border: 1px solid #d3dde3;
+        background: #f8faf8;
+        border: 1px solid #cad7d0;
+        border-radius: 8px;
+    }
+    QFrame#workspace_header,
+    QFrame#network_section,
+    QFrame#fingerprint_section,
+    QFrame#launch_section {
+        background: #fbfcfa;
+        border: 1px solid #d5dfd9;
         border-radius: 8px;
     }
     QLabel#app_title {
         font-size: 22px;
         font-weight: 700;
     }
-    QLabel#app_subtitle, QLabel#data_hint, QLabel#diagnostic_log {
-        color: #64717a;
+    QLabel#app_subtitle, QLabel#data_hint, QLabel#diagnostic_log, QLabel#environment_count {
+        color: #5d6b66;
     }
     QLabel#section_title {
-        font-size: 17px;
+        font-size: 18px;
         font-weight: 650;
+    }
+    QLabel#workspace_title {
+        font-size: 15px;
+        font-weight: 650;
+        color: #24302b;
+    }
+    QLabel#workspace_status {
+        color: #1e6b64;
+        background: #e1efeb;
+        border: 1px solid #b8d4cd;
+        border-radius: 6px;
+        padding: 4px 10px;
+    }
+    QLabel#section_label {
+        font-size: 14px;
+        font-weight: 650;
+        color: #26312d;
+    }
+    QListWidget {
+        background: #f8faf8;
+        border: 1px solid #c7d3cd;
+        border-radius: 6px;
+        outline: 0;
+    }
+    QListWidget#saved_configurations::item,
+    QListWidget#running_sessions::item {
+        min-height: 44px;
+        padding: 8px;
+        border-radius: 6px;
+        color: #26312d;
+    }
+    QListWidget#saved_configurations::item:selected,
+    QListWidget#running_sessions::item:selected {
+        background: #d9e8e4;
+        color: #163d39;
     }
     QLineEdit, QSpinBox, QComboBox {
         min-height: 30px;
         padding: 4px 8px;
-        border: 1px solid #b8c4cb;
+        border: 1px solid #b8c8c1;
         border-radius: 6px;
-        background: #ffffff;
+        background: #fcfdfb;
     }
     QLineEdit:focus, QSpinBox:focus, QComboBox:focus {
-        border: 1px solid #2866b6;
+        border: 1px solid #24756c;
     }
     QPushButton {
         min-height: 32px;
         padding: 4px 12px;
         border-radius: 6px;
-        border: 1px solid #aebbc4;
-        background: #e8eef2;
+        border: 1px solid #aebdb6;
+        background: #e8eeeb;
+        color: #26312d;
     }
     QPushButton:hover {
-        background: #dce5eb;
+        background: #dde8e3;
     }
     QPushButton#launch_current_form {
-        color: #ffffff;
-        background: #2866b6;
-        border-color: #235aa2;
+        color: #f7fbfa;
+        background: #276b93;
+        border-color: #215b7d;
+    }
+    QPushButton#delete_config, QPushButton#delete_profile_data {
+        color: #7b2d28;
+        border-color: #d5b2ad;
+        background: #f2e8e5;
     }
     """
 
@@ -657,14 +801,15 @@ def _launch_browser_session(
         if saved_config_id is not None
         else profile_manager.temporary_profile(session_id)
     )
-    launch_result = launcher.launch(
-        config=config,
-        session_id=session_id,
-        start_url="about:blank",
-        profile_dir=profile.path,
-    )
+    profile_lock = profile_manager.acquire_runtime_lock(profile, session_id=session_id)
     fingerprint_controller = None
     try:
+        launch_result = launcher.launch(
+            config=config,
+            session_id=session_id,
+            start_url="about:blank",
+            profile_dir=profile.path,
+        )
         fingerprint_controller = _start_fingerprint_controller(
             launch_result=launch_result,
             config=config,
@@ -673,8 +818,14 @@ def _launch_browser_session(
             session_id=session_id,
         )
     except Exception:
-        launcher.stop(launch_result)
-        profile_manager.cleanup_temporary(profile)
+        try:
+            if "launch_result" in locals():
+                launcher.stop(launch_result)
+        except Exception:
+            pass
+        finally:
+            profile_lock.release()
+            profile_manager.cleanup_temporary(profile)
         raise
     return DesktopLaunchedSession(
         session_id=session_id,
@@ -684,6 +835,7 @@ def _launch_browser_session(
         profile=profile,
         saved_config_id=saved_config_id,
         fingerprint_controller=fingerprint_controller,
+        profile_lock=profile_lock,
     )
 
 
