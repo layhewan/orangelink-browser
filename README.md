@@ -27,6 +27,12 @@
 - **便携打包** — 携带正式版 Chrome，下载即用
 - **桌面 GUI** — PySide6 界面，双击启动配置，实时查看运行状态
 
+### 检测评分 / Detection Scores
+
+| browserscan.net | browserscan.org |
+|:---:|:---:|
+| ![browserscan.net](assets/browsernet.png) | ![browserscan.org](assets/browserorg.png) |
+
 ### 快速开始
 
 ```powershell
@@ -109,6 +115,12 @@ python -m pytest tests/ -q
 # Auto-detects system Chrome and packages everything
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build_portable.ps1 -OutputDir my_build
 ```
+
+### Detection Scores
+
+| browserscan.net | browserscan.org |
+|:---:|:---:|
+| ![browserscan.net](assets/browsernet.png) | ![browserscan.org](assets/browserorg.png) |
 
 ### Project Structure
 
