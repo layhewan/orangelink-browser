@@ -15,6 +15,28 @@ $RuntimePath = Join-Path $OutputPath "runtime"
 $AppDisplayName = -join ([char[]](0x8110, 0x6A59, 0x6D4F, 0x89C8, 0x5668))
 $OfficialChromeSource = Join-Path $RepoRoot "chrome-win64"
 $BundledChromiumSource = Join-Path $RepoRoot "runtime\chromium"
+
+# Auto-detect system Chrome and copy to chrome-win64 (overwrites any Chrome for Testing)
+$SystemChromePaths = @(
+    "C:\Program Files\Google\Chrome\Application\chrome.exe",
+    "C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"
+)
+$SystemChromeFound = $false
+foreach ($path in $SystemChromePaths) {
+    if (Test-Path $path) {
+        $SystemChromeDir = Split-Path -Parent $path
+        Write-Host "Detected system Chrome at $SystemChromeDir, copying to $OfficialChromeSource ..."
+        Remove-Item -Recurse -Force -Path $OfficialChromeSource -ErrorAction SilentlyContinue
+        New-Item -ItemType Directory -Force -Path $OfficialChromeSource | Out-Null
+        Copy-Item -Recurse -Force -Path "$SystemChromeDir\*" -Destination $OfficialChromeSource
+        $SystemChromeFound = $true
+        break
+    }
+}
+if (-not $SystemChromeFound) {
+    Write-Host "System Chrome not found, using chrome-win64 or bundled chromium."
+}
+
 $ChromiumSource = if (Test-Path (Join-Path $OfficialChromeSource "chrome.exe")) {
     $OfficialChromeSource
 } else {
@@ -85,7 +107,22 @@ if ($LASTEXITCODE -ne 0) {
 if (-not (Test-Path $PyInstallerAppPath)) {
     throw "PyInstaller did not produce expected app directory: $PyInstallerAppPath"
 }
-Copy-Item -Recurse -Force -Path (Join-Path $PyInstallerAppPath "*") -Destination $OutputPath
+# Wait for Defender scans to release file locks before copying
+Write-Host "Waiting for file locks to clear before copying..."
+Start-Sleep -Seconds 15
+$copyAttempt = 0
+do {
+    if ($copyAttempt -gt 0) { Start-Sleep -Seconds 5 }
+    $copyResult = 0
+    try {
+        Copy-Item -Force "$PyInstallerAppPath\orangelink-browser.exe" "$OutputPath\" -ErrorAction Stop
+        xcopy /E /I /Y "$PyInstallerAppPath\_internal" "$OutputPath\_internal\" > $null 2>&1
+    } catch {
+        $copyResult = 8
+    }
+    $copyAttempt++
+} while ($copyResult -ge 8 -and $copyAttempt -lt 3)
+if ($copyResult -ge 8) { throw "Failed to copy build output after $copyAttempt attempts." }
 if (-not (Test-Path $PyInstallerExePath)) {
     throw "PyInstaller did not produce expected executable: $PyInstallerExePath"
 }

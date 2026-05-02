@@ -15,6 +15,81 @@ def test_proxy_geo_result_maps_ip_api_timezone_and_language() -> None:
     )
 
 
+def test_proxy_geo_result_can_use_provider_language_hint() -> None:
+    from app.runtime.proxy_geo import ProxyGeoResult, parse_ipapi_payload
+
+    result = parse_ipapi_payload(
+        b'{"ip":"198.51.100.10","country_code":"BR","timezone":"America/Sao_Paulo","languages":"pt-BR,en"}'
+    )
+
+    assert result == ProxyGeoResult(
+        timezone="America/Sao_Paulo",
+        language="pt-BR",
+        query="198.51.100.10",
+    )
+
+
+def test_proxy_geo_result_can_parse_ipwho_payload() -> None:
+    from app.runtime.proxy_geo import ProxyGeoResult, parse_ipwho_payload
+
+    result = parse_ipwho_payload(
+        b'{"success":true,"ip":"203.0.113.30","country_code":"NL","timezone":{"id":"Europe/Amsterdam"}}'
+    )
+
+    assert result == ProxyGeoResult(
+        timezone="Europe/Amsterdam",
+        language="nl-NL",
+        query="203.0.113.30",
+    )
+
+
+def test_proxy_geo_result_can_parse_ipinfo_payload() -> None:
+    from app.runtime.proxy_geo import ProxyGeoResult, parse_ipinfo_payload
+
+    result = parse_ipinfo_payload(
+        b'{"ip":"203.0.113.40","country":"US","timezone":"America/Los_Angeles"}'
+    )
+
+    assert result == ProxyGeoResult(
+        timezone="America/Los_Angeles",
+        language="en-US",
+        query="203.0.113.40",
+    )
+
+
+def test_proxy_geo_probe_tries_next_provider_after_failure(monkeypatch) -> None:
+    from app.runtime.config import LaunchConfig
+    import app.runtime.proxy_geo as proxy_geo
+
+    calls = []
+
+    def fake_fetch(config, host: str, path: str) -> bytes:
+        calls.append(host)
+        if host == "ip-api.com":
+            # Make first provider fail
+            return b'{"status":"fail","message":"reserved range"}'
+        if host == "ipapi.co":
+            return b'{"timezone":"Europe/Paris","country_code":"FR","country":"France","ip":"198.51.100.20"}'
+        return b'{"status":"success","query":"198.51.100.20","countryCode":"FR","timezone":"Europe/Paris"}'
+
+    monkeypatch.setattr(proxy_geo, "_fetch_geo_payload", fake_fetch)
+
+    result = proxy_geo.probe_proxy_geo(
+        LaunchConfig(
+            name="Proxy",
+            proxy_enabled=True,
+            proxy_host="127.0.0.1",
+            proxy_port=7897,
+        )
+    )
+
+    assert result is not None
+    assert result.timezone == "Europe/Paris"
+    assert result.language == "fr-FR"
+    # Two-stage probe tries httpbin.org first (×2 retries), then falls back to original providers
+    assert calls[:4] == ["httpbin.org", "httpbin.org", "ip-api.com", "ipapi.co"]
+
+
 def test_proxy_geo_keeps_hong_kong_as_web_visible_locale() -> None:
     from app.runtime.proxy_geo import parse_ip_api_payload
 
@@ -74,7 +149,7 @@ def test_enrich_config_with_proxy_geo_cache_sets_auto_values() -> None:
     assert enriched.cached_language == "ja-JP"
 
 
-def test_enrich_config_clears_stale_auto_cache_when_proxy_geo_probe_fails() -> None:
+def test_enrich_config_clears_stale_cache_when_proxy_geo_probe_fails() -> None:
     from app.runtime.config import LaunchConfig
     from app.runtime.proxy_geo import enrich_config_with_proxy_geo
 
@@ -89,5 +164,6 @@ def test_enrich_config_clears_stale_auto_cache_when_proxy_geo_probe_fails() -> N
 
     enriched = enrich_config_with_proxy_geo(config, probe=lambda _: None)
 
+    # Should clear stale cached values when probe fails with auto-detection
     assert enriched.cached_timezone == ""
     assert enriched.cached_language == ""

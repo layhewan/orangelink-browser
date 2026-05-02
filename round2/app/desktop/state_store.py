@@ -23,6 +23,13 @@ class StateStore:
 
     def save_config(self, config: LaunchConfig) -> SavedConfig:
         state = self._read_state()
+        # Overwrite existing config with the same name
+        for existing_id, existing_data in state["configs"].items():
+            if existing_data.get("name") == config.name:
+                state["configs"][existing_id] = _config_to_dict(config)
+                self._write_state(state)
+                return SavedConfig(config_id=existing_id, config=config)
+        # No existing config with same name — create new
         config_id = str(state["next_config_number"])
         state["next_config_number"] += 1
         state["configs"][config_id] = _config_to_dict(config)

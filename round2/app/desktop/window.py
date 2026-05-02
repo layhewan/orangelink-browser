@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 import time
 import socket
 import inspect
@@ -132,7 +133,7 @@ def create_main_window(
     state_store: StateStore | None = None,
     geo_probe: Callable[[LaunchConfig], ProxyGeoResult | None] | None = None,
 ):
-    from PySide6.QtCore import Qt
+    from PySide6.QtCore import Qt, QTimer
     from PySide6.QtGui import QIcon
     from PySide6.QtWidgets import (
         QCheckBox,
@@ -146,6 +147,7 @@ def create_main_window(
         QListWidget,
         QListWidgetItem,
         QMainWindow,
+        QMessageBox,
         QPushButton,
         QVBoxLayout,
         QWidget,
@@ -163,7 +165,12 @@ def create_main_window(
     window = OrangelinkMainWindow()
     window.setWindowTitle(ZH_UI_STRINGS["window_title"])
     icon_path = _asset_icon_path()
-    if icon_path.exists():
+    if getattr(sys, "frozen", False):
+        try:
+            window.setWindowIcon(QIcon(sys.executable))
+        except Exception:
+            pass
+    elif icon_path.exists():
         window.setWindowIcon(QIcon(str(icon_path)))
     window.setMinimumSize(*MINIMUM_WINDOW_SIZE)
     window.resize(*MINIMUM_WINDOW_SIZE)
@@ -187,18 +194,24 @@ def create_main_window(
     sidebar_layout.addWidget(title)
     sidebar_layout.addWidget(subtitle)
     sidebar_layout.addSpacing(16)
-    sidebar_layout.addWidget(QLabel("运行状态"))
+    run_status_label = QLabel("运行状态")
+    run_status_label.setObjectName("sidebar_heading")
+    sidebar_layout.addWidget(run_status_label)
     session_summary = QLabel("未启动")
     session_summary.setObjectName("session_summary")
     sidebar_layout.addWidget(session_summary)
     sidebar_layout.addSpacing(12)
-    sidebar_layout.addWidget(QLabel("数据位置"))
+    data_location_label = QLabel("数据位置")
+    data_location_label.setObjectName("sidebar_heading")
+    sidebar_layout.addWidget(data_location_label)
     data_hint = QLabel(str(resolve_portable_paths().data))
     data_hint.setObjectName("data_hint")
     data_hint.setWordWrap(True)
     sidebar_layout.addWidget(data_hint)
     sidebar_layout.addSpacing(12)
-    sidebar_layout.addWidget(QLabel("浏览器环境"))
+    browser_env_label = QLabel("浏览器环境")
+    browser_env_label.setObjectName("sidebar_heading")
+    sidebar_layout.addWidget(browser_env_label)
     environment_count = QLabel("0 个环境")
     environment_count.setObjectName("environment_count")
     sidebar_layout.addWidget(environment_count)
@@ -269,10 +282,11 @@ def create_main_window(
     fingerprint_form.setLabelAlignment(Qt.AlignRight)
     config_name = QLineEdit("默认配置")
     config_name.setObjectName("config_name")
-    start_page = QLineEdit("https://www.google.com/search?q=orangelink")
+    start_page = QLineEdit("https://www.google.com/webhp")
     start_page.setObjectName("start_page")
     proxy_enabled = QCheckBox(ZH_UI_STRINGS["proxy_enabled"])
     proxy_enabled.setObjectName("proxy_enabled")
+    proxy_enabled.setChecked(True)
     proxy_protocol = QComboBox()
     proxy_protocol.setObjectName("proxy_protocol")
     proxy_protocol.addItems(["http", "https", "socks5"])
@@ -417,23 +431,58 @@ def create_main_window(
         set_form(LaunchConfig(name="新配置"))
         status_label.setText("正在编辑新配置")
 
-    def save_current_config(*, duplicate: bool = False) -> str | None:
+    def save_current_config(*, duplicate: bool = False) -> None:
         validation = current_form().validate()
         if not validation.ok or validation.config is None:
             status_label.setText(validation.error)
-            return None
-        config = _enrich_config_with_status(
-            validation.config,
-            status_label=status_label,
-            geo_probe=geo_probe,
-        )
-        if duplicate:
-            config = replace(config, name=f"{config.name} 副本")
-        saved = store.save_config(config)
-        config_id = saved.config_id
-        refresh_config_list(select_id=config_id)
-        status_label.setText("已保存为新环境")
-        return config_id
+            return
+        cfg = validation.config
+        status_label.setText("正在探测...")
+        _save_result: list[object] = []
+
+        def _work():
+            try:
+                need_proxy_check = geo_probe is None and cfg.proxy_enabled and (cfg.automatic_language or cfg.automatic_timezone)
+                proxy_reachable = True
+                if need_proxy_check:
+                    try:
+                        with socket.create_connection(
+                            (cfg.proxy_host, int(cfg.proxy_port or 0)), timeout=0.3
+                        ):
+                            pass
+                    except (OSError, ValueError):
+                        proxy_reachable = False
+                enriched, _ = _enrich_config_async(cfg, geo_probe=geo_probe) if proxy_reachable else (cfg, "")
+                if duplicate:
+                    enriched = replace(enriched, name=f"{enriched.name} 副本")
+                _save_result.append(store.save_config(enriched))
+            except Exception as exc:
+                _save_result.append(exc)
+
+        import threading
+        thread = threading.Thread(target=_work, daemon=True)
+        thread.start()
+        thread.join(timeout=0.01)
+        if not thread.is_alive() and _save_result:
+            _apply_save_result(_save_result[0])
+            return
+        poll_timer = QTimer()
+        poll_timer.timeout.connect(lambda: _poll_save(thread, poll_timer, _save_result))
+        poll_timer.start(200)
+
+    def _apply_save_result(result) -> None:
+        if isinstance(result, Exception):
+            status_label.setText(f"保存失败: {result}")
+            return
+        refresh_config_list(select_id=result.config_id)
+        status_label.setText("已保存")
+
+    def _poll_save(thread, timer, result_list) -> None:
+        if thread.is_alive():
+            return
+        timer.stop()
+        if result_list:
+            _apply_save_result(result_list[0])
 
     def on_delete_config(*, remove_profile: bool = False) -> None:
         config_id = selected_config_id()
@@ -442,6 +491,22 @@ def create_main_window(
             return
         if config_id in running_saved_config_ids:
             status_label.setText("请先停止该环境再删除")
+            popup = QMessageBox(window)
+            popup.setIcon(QMessageBox.Warning)
+            popup.setWindowTitle("无法删除")
+            popup.setText("该配置正在运行中，请先停止再删除。")
+            popup.setStandardButtons(QMessageBox.Ok)
+            popup.setModal(True)
+            popup.show()
+            return
+        msg = "确定要删除配置「" + store.load_config(config_id).name + "」吗？"
+        if remove_profile:
+            msg += "\n浏览器数据将被一同删除。"
+        reply = QMessageBox.question(
+            window, "确认删除", msg,
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
             return
         profile_removed = store.delete_config(config_id, remove_profile=remove_profile)
         refresh_config_list()
@@ -471,44 +536,124 @@ def create_main_window(
         dirty_selected_config = selected_config is not None and validation.config != selected_config
         if config_id is not None and not dirty_selected_config and config_id in running_saved_config_ids:
             status_label.setText("该配置已在运行中")
+            popup = QMessageBox(window)
+            popup.setIcon(QMessageBox.Warning)
+            popup.setWindowTitle("提示")
+            popup.setText("该配置已在运行中，不能重复启动。")
+            popup.setStandardButtons(QMessageBox.Ok)
+            popup.setModal(True)
+            popup.show()
             return
-        launch_config = _enrich_config_with_status(
-            validation.config,
-            status_label=status_label,
-            geo_probe=geo_probe,
-        )
-        auto_saved_for_launch = False
+
+        # Auto-save on main thread (quick file I/O)
+        launch_config = validation.config
         if config_id is not None and dirty_selected_config:
             saved = store.save_config(launch_config)
             config_id = saved.config_id
             refresh_config_list(select_id=config_id)
-            auto_saved_for_launch = True
         elif config_id is not None and launch_config != validation.config:
             store.update_config(config_id, launch_config)
-        handler = launch_handler or _launch_browser_session
-        try:
-            session = _invoke_launch_handler(
-                handler,
-                config=launch_config,
-                start_url=form.start_page or launch_config.start_page,
-                saved_config_id=config_id,
-            )
-        except Exception as exc:
-            status_label.setText(f"启动失败: {exc}")
+
+        # Background thread for geo probe + browser launch
+        import threading
+        _launch_result: list[object] = []
+
+        def _work() -> None:
+            try:
+                h = launch_handler
+                if h is not None:
+                    # Test/mock handler — pass through invoke for signature inspection
+                    session = _invoke_launch_handler(
+                        h, config=launch_config,
+                        start_url=form.start_page or launch_config.start_page,
+                        saved_config_id=config_id,
+                    )
+                    _launch_result.append(session)
+                    return
+                # Production: proxy check + geo probe + launch
+                try:
+                    with socket.create_connection(
+                        (launch_config.proxy_host, int(launch_config.proxy_port or 0)),
+                        timeout=0.3,
+                    ):
+                        enriched, _ = _enrich_config_async(launch_config, geo_probe=geo_probe)
+                except (OSError, ValueError):
+                    enriched = launch_config
+                session = _invoke_launch_handler(
+                    _launch_browser_session,
+                    config=enriched,
+                    start_url=form.start_page or launch_config.start_page,
+                    saved_config_id=config_id,
+                )
+                _launch_result.append(session)
+            except Exception as exc:
+                _launch_result.append(exc)
+
+        _disable_launch_button()
+        thread = threading.Thread(target=_work, daemon=True)
+        thread.start()
+
+        # 10ms non-blocking check for test mode (thread finishes instantly in tests)
+        thread.join(timeout=0.01)
+        if not thread.is_alive():
+            if _launch_result:
+                _apply_launch_result(_launch_result[0], config_id, launch_config)
             return
 
-        running_sessions.append(session)
+        # Production: poll with QTimer while thread runs in background
+        status_label.setText("正在启动浏览器...")
+        poll_timer = QTimer()
+        poll_timer.timeout.connect(lambda: _poll_launch(thread, poll_timer, _launch_result, config_id, launch_config))
+        poll_timer.start(200)
+
+    def _apply_launch_result(result, config_id, launch_config) -> bool:
+        if isinstance(result, Exception):
+            status_label.setText(f"启动失败: {result}")
+            launch_button.setEnabled(True)
+            return False
+        running_sessions.append(result)
         if config_id is not None:
             running_saved_config_ids.add(config_id)
         session_item = QListWidgetItem(
             f"{launch_config.name}\n"
-            f"{getattr(session, 'session_id', len(running_sessions))} · {_config_summary(launch_config)}"
+            f"{getattr(result, 'session_id', len(running_sessions))} · {_config_summary(launch_config)}"
         )
-        session_item.setData(Qt.UserRole, id(session))
+        session_item.setData(Qt.UserRole, id(result))
         session_list.addItem(session_item)
         session_summary.setText(f"运行中: {len(running_sessions)}")
         workspace_status.setText(f"{len(running_sessions)} 个会话")
-        status_label.setText("已另存新环境并启动" if auto_saved_for_launch else "会话已启动")
+        status_label.setText("会话已启动")
+        launch_button.setEnabled(True)
+        return True
+
+    def _poll_launch(thread, timer, result_list, config_id, launch_config) -> None:
+        if thread.is_alive():
+            return
+        timer.stop()
+        if result_list:
+            _apply_launch_result(result_list[0], config_id, launch_config)
+
+    def _disable_launch_button() -> None:
+        try:
+            launch_button.setEnabled(False)
+        except Exception:
+            pass
+
+    def on_config_double_click() -> None:
+        cid = selected_config_id()
+        if cid is None:
+            return
+        if cid in running_saved_config_ids:
+            status_label.setText("该配置已在运行中")
+            popup = QMessageBox(window)
+            popup.setIcon(QMessageBox.Warning)
+            popup.setWindowTitle("提示")
+            popup.setText("该配置已在运行中，不能重复启动。")
+            popup.setStandardButtons(QMessageBox.Ok)
+            popup.setModal(True)
+            popup.show()
+            return
+        on_launch()
 
     def on_stop_selected() -> None:
         row = session_list.currentRow()
@@ -537,6 +682,7 @@ def create_main_window(
 
     refresh_config_list()
     config_list.currentItemChanged.connect(lambda *_: on_config_selected())
+    config_list.itemDoubleClicked.connect(lambda *_: on_config_double_click())
     create_button.clicked.connect(on_create_config)
     save_button.clicked.connect(lambda: save_current_config())
     duplicate_button.clicked.connect(lambda: save_current_config(duplicate=True))
@@ -654,6 +800,23 @@ def _enrich_config_with_status(
     return enriched
 
 
+def _enrich_config_async(
+    config: LaunchConfig,
+    *,
+    geo_probe: Callable[[LaunchConfig], ProxyGeoResult | None] | None,
+) -> tuple[LaunchConfig, str]:
+    """Thread-safe version — returns (config, status_message) without touching Qt widgets."""
+    if not config.proxy_enabled or not (config.automatic_language or config.automatic_timezone):
+        return config, ""
+    enriched = enrich_config_with_proxy_geo(config, probe=geo_probe or probe_proxy_geo)
+    msg = ""
+    if enriched.cached_timezone and enriched.cached_timezone != config.cached_timezone:
+        msg = f"已匹配代理时区: {enriched.cached_timezone}"
+    elif config.automatic_timezone and not config.cached_timezone:
+        msg = "自动时区未获取，可使用手动时区"
+    return enriched, msg
+
+
 def _config_list_text(config: LaunchConfig) -> str:
     return f"{config.name}\n{_config_summary(config)}"
 
@@ -684,124 +847,228 @@ def _asset_icon_path() -> Path:
 def _desktop_stylesheet() -> str:
     return """
     QMainWindow {
-        background: #151720;
-        color: #e8edf6;
+        background: #F0F6F0;
+        color: #1B5E20;
         font-family: "Segoe UI", "Microsoft YaHei UI", sans-serif;
         font-size: 13px;
     }
     QFrame#sidebar {
-        background: #1b2030;
-        border: 1px solid #30384a;
-        border-radius: 8px;
+        background: #FFFFFF;
+        border: 1px solid #DCEDC8;
+        border-radius: 12px;
         min-width: 300px;
         max-width: 330px;
     }
     QFrame#main_panel {
-        background: #191e2b;
-        border: 1px solid #30384a;
-        border-radius: 8px;
+        background: #FFFFFF;
+        border: 1px solid #DCEDC8;
+        border-radius: 12px;
     }
     QFrame#workspace_header,
     QFrame#network_section,
     QFrame#fingerprint_section,
     QFrame#session_section {
-        background: #202638;
-        border: 1px solid #354058;
-        border-radius: 8px;
+        background: #F8FBF8;
+        border: 1px solid #DCEDC8;
+        border-radius: 10px;
     }
     QLabel#app_title {
         font-size: 22px;
         font-weight: 700;
-        color: #f2f6ff;
+        color: #1B5E20;
     }
-    QLabel#app_subtitle, QLabel#data_hint, QLabel#diagnostic_log, QLabel#environment_count {
-        color: #a8b3c7;
+    QLabel#app_subtitle, QLabel#data_hint, QLabel#environment_count {
+        color: #6B8B6B;
+    }
+    QLabel#sidebar_heading {
+        font-size: 12px;
+        font-weight: 600;
+        color: #81A881;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        padding-top: 4px;
+    }
+    QLabel#diagnostic_log {
+        color: #6B8B6B;
     }
     QLabel#section_title {
         font-size: 18px;
         font-weight: 650;
-        color: #f2f6ff;
+        color: #1B5E20;
     }
     QLabel#workspace_title {
         font-size: 15px;
         font-weight: 650;
-        color: #f2f6ff;
+        color: #1B5E20;
     }
     QLabel#workspace_status {
-        color: #7de0d2;
-        background: #162d34;
-        border: 1px solid #246a70;
+        color: #2E7D32;
+        background: #E8F5E9;
+        border: 1px solid #A5D6A7;
         border-radius: 6px;
         padding: 4px 10px;
     }
     QLabel#section_label {
         font-size: 14px;
         font-weight: 650;
-        color: #f2f6ff;
+        color: #2E7D32;
+    }
+    QLabel#session_summary {
+        color: #2E7D32;
+        font-weight: 600;
+        font-size: 14px;
     }
     QLabel {
-        color: #e8edf6;
+        color: #2E3B2E;
     }
     QCheckBox {
-        color: #e8edf6;
+        color: #2E3B2E;
         spacing: 8px;
     }
-    QListWidget {
-        background: #151a26;
-        border: 1px solid #354058;
-        border-radius: 6px;
-        outline: 0;
-        color: #e8edf6;
+    QCheckBox::indicator {
+        width: 18px;
+        height: 18px;
+        border-radius: 4px;
+        border: 2px solid #A5D6A7;
     }
-    QListWidget#saved_configurations::item,
-    QListWidget#running_sessions::item {
+    QCheckBox::indicator:checked {
+        background: #4CAF50;
+        border-color: #4CAF50;
+    }
+    QListWidget {
+        background: #FFFFFF;
+        border: 1px solid #DCEDC8;
+        border-radius: 8px;
+        outline: 0;
+        color: #1B5E20;
+    }
+    QListWidget::item {
         min-height: 44px;
         padding: 8px;
         border-radius: 6px;
-        color: #e8edf6;
+        color: #2E3B2E;
     }
-    QListWidget#saved_configurations::item:selected,
-    QListWidget#running_sessions::item:selected {
-        background: #263d58;
-        color: #f4f8ff;
+    QListWidget::item:selected {
+        background: #E8F5E9;
+        color: #1B5E20;
+    }
+    QListWidget::item:hover {
+        background: #F1F8E9;
     }
     QLineEdit, QSpinBox, QComboBox {
         min-height: 30px;
         padding: 4px 8px;
-        border: 1px solid #445069;
-        border-radius: 6px;
-        background: #151a26;
-        color: #f2f6ff;
+        border: 1px solid #C8E6C9;
+        border-radius: 8px;
+        background: #FFFFFF;
+        color: #1B5E20;
     }
     QLineEdit:focus, QSpinBox:focus, QComboBox:focus {
-        border: 1px solid #3fb6d8;
+        border: 1px solid #4CAF50;
+    }
+    QComboBox::drop-down {
+        border: 0;
+        width: 24px;
     }
     QComboBox QAbstractItemView {
-        background: #151a26;
-        color: #f2f6ff;
-        selection-background-color: #263d58;
-        border: 1px solid #445069;
+        background: #FFFFFF;
+        color: #1B5E20;
+        selection-background-color: #E8F5E9;
+        border: 1px solid #C8E6C9;
+        border-radius: 4px;
     }
     QPushButton {
         min-height: 32px;
         padding: 4px 12px;
-        border-radius: 6px;
-        border: 1px solid #47536b;
-        background: #252c3e;
-        color: #e8edf6;
+        border-radius: 8px;
+        border: 1px solid #C8E6C9;
+        background: #FFFFFF;
+        color: #2E3B2E;
     }
     QPushButton:hover {
-        background: #30394d;
+        background: #F1F8E9;
+        border-color: #A5D6A7;
+    }
+    QPushButton:pressed {
+        background: #DCEDC8;
+        border-color: #A5D6A7;
+        padding-top: 5px;
+        padding-left: 13px;
+    }
+    QPushButton:disabled {
+        background: #F5F5F5;
+        color: #BDBDBD;
+        border-color: #E0E0E0;
     }
     QPushButton#launch_current_form {
-        color: #f7fbff;
-        background: #2377a8;
-        border-color: #2f9ccc;
+        color: #FFFFFF;
+        background: #4CAF50;
+        border-color: #43A047;
+        font-weight: 600;
+    }
+    QPushButton#launch_current_form:hover {
+        background: #43A047;
+    }
+    QPushButton#launch_current_form:pressed {
+        background: #2E7D32;
+        border-color: #1B5E20;
     }
     QPushButton#delete_config, QPushButton#delete_profile_data {
-        color: #ffd4cf;
-        border-color: #79453f;
-        background: #3a2428;
+        color: #FFFFFF;
+        background: #EF5350;
+        border-color: #E53935;
+    }
+    QPushButton#delete_config:hover, QPushButton#delete_profile_data:hover {
+        background: #E53935;
+    }
+    QPushButton#delete_config:pressed, QPushButton#delete_profile_data:pressed {
+        background: #C62828;
+        border-color: #B71C1C;
+    }
+    QPushButton#save_config, QPushButton#create_config, QPushButton#duplicate_config {
+        background: #E8F5E9;
+        border-color: #A5D6A7;
+        color: #2E7D32;
+    }
+    QPushButton#save_config:hover, QPushButton#create_config:hover, QPushButton#duplicate_config:hover {
+        background: #C8E6C9;
+    }
+    QPushButton#save_config:pressed, QPushButton#create_config:pressed, QPushButton#duplicate_config:pressed {
+        background: #A5D6A7;
+    }
+    QPushButton#probe_proxy {
+        color: #1565C0;
+        background: #E3F2FD;
+        border-color: #90CAF9;
+    }
+    QPushButton#probe_proxy:hover {
+        background: #BBDEFB;
+    }
+    QPushButton#probe_proxy:pressed {
+        background: #90CAF9;
+    }
+    QPushButton#stop_all {
+        color: #FFFFFF;
+        background: #EF5350;
+        border-color: #E53935;
+    }
+    QPushButton#stop_all:hover {
+        background: #E53935;
+    }
+    QPushButton#stop_all:pressed {
+        background: #C62828;
+        border-color: #B71C1C;
+    }
+    QPushButton#stop_selected {
+        color: #C62828;
+        background: #FFEBEE;
+        border-color: #EF9A9A;
+    }
+    QPushButton#stop_selected:hover {
+        background: #FFCDD2;
+    }
+    QPushButton#stop_selected:pressed {
+        background: #EF9A9A;
     }
     """
 

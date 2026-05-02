@@ -59,11 +59,13 @@ def build_fingerprint_profile(
         raw_language,
         fallback=config.manual_language,
     )
-    timezone = (
+    timezone_raw = (
         geo_cache.get("timezone") or cached_timezone
         if config.automatic_timezone
         else config.manual_timezone
     ) or config.manual_timezone
+    # Only set timezone if we have a meaningful value to avoid UTC fallback
+    timezone = timezone_raw if timezone_raw and timezone_raw not in ("UTC", "") else ""
     os_family = config.os_fingerprint.lower()
     os_profile = OS_PROFILES.get(os_family, OS_PROFILES["windows"])
     major = claimed_major or actual_engine.major
@@ -111,12 +113,13 @@ def apply_fingerprint_overrides(cdp: Any, session_id: str, profile: FingerprintP
         },
         session_id=session_id,
     )
-    _send_cdp(
-        cdp,
-        "Emulation.setTimezoneOverride",
-        {"timezoneId": profile.timezone},
-        session_id=session_id,
-    )
+    if profile.timezone:
+        _send_cdp(
+            cdp,
+            "Emulation.setTimezoneOverride",
+            {"timezoneId": profile.timezone},
+            session_id=session_id,
+        )
     _send_cdp(
         cdp,
         "Page.addScriptToEvaluateOnNewDocument",
@@ -130,7 +133,8 @@ def _accept_language(language: str) -> str:
     if "-" not in language:
         return language
     base = language.split("-", 1)[0]
-    return f"{language},{base};q=0.9"
+    # No q factors — Chrome adds them internally
+    return f"{language},{base}"
 
 
 def _navigator_override_script(profile: FingerprintProfile) -> str:
@@ -146,12 +150,55 @@ def _navigator_override_script(profile: FingerprintProfile) -> str:
       Object.defineProperty(target, key, {{get: () => value, configurable: true}});
     }} catch (_) {{}}
   }};
+  const defineReadOnly = (target, key, value) => {{
+    try {{
+      Object.defineProperty(target, key, {{value, writable: false, configurable: true}});
+    }} catch (_) {{}}
+  }};
+
+  /* --- navigator properties --- */
   define(navigator, 'language', language);
   define(navigator, 'languages', languages);
   define(navigator, 'platform', {json.dumps(profile.navigator_platform)});
   define(navigator, 'hardwareConcurrency', {profile.hardware_concurrency});
   define(navigator, 'deviceMemory', {profile.device_memory});
+  define(navigator, 'webdriver', false);
 
+  /* --- remove automation traces --- */
+  if (window.cdc_adoQpoasnfa76pfcZLmcfl_Array) {{ window.cdc_adoQpoasnfa76pfcZLmcfl_Array = undefined; }}
+  if (window.cdc_adoQpoasnfa76pfcZLmcfl_Promise) {{ window.cdc_adoQpoasnfa76pfcZLmcfl_Promise = undefined; }}
+  if (window.cdc_adoQpoasnfa76pfcZLmcfl_Symbol) {{ window.cdc_adoQpoasnfa76pfcZLmcfl_Symbol = undefined; }}
+
+  /* --- chrome.runtime --- */
+  if (window.chrome && window.chrome.runtime) {{
+    defineReadOnly(window.chrome.runtime, 'id', undefined);
+    const dummyApp = {{ isInstalled: false, InstallState: {{ DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' }}, RunningState: {{ CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' }} }};
+    defineReadOnly(window.chrome.runtime, 'onInstalled', {{ addListener: function() {{}} }});
+    defineReadOnly(window.chrome.runtime, 'onStartup', {{ addListener: function() {{}} }});
+  }}
+
+  /* --- screen properties --- */
+  try {{
+    define(screen, 'width', 1920);
+    define(screen, 'height', 1080);
+    define(screen, 'availWidth', 1920);
+    define(screen, 'availHeight', 1040);
+    define(screen, 'colorDepth', 24);
+    define(screen, 'pixelDepth', 24);
+  }} catch (_) {{}}
+
+  /* --- permissions --- */
+  if (navigator.permissions && navigator.permissions.query) {{
+    const origQuery = navigator.permissions.query.bind(navigator.permissions);
+    navigator.permissions.query = (desc) => {{
+      if (desc && desc.name === 'notifications') {{
+        return Promise.resolve({{ state: 'prompt', onchange: null }});
+      }}
+      return origQuery(desc);
+    }};
+  }}
+
+  /* --- Intl locale patching --- */
   const defaultIntlInstances = new WeakSet();
   const normalizeLocaleArgs = (args) => {{
     const values = Array.from(args);
@@ -170,20 +217,16 @@ def _navigator_override_script(profile: FingerprintProfile) -> str:
     if (typeof Original !== 'function') {{
       return;
     }}
-    const resolved = Original.prototype && Object.getOwnPropertyDescriptor(Original.prototype, 'resolvedOptions');
-    if (resolved && typeof resolved.value === 'function') {{
+    if (Original.prototype && Original.prototype.resolvedOptions) {{
+      const origResolved = Original.prototype.resolvedOptions;
       try {{
-        Object.defineProperty(Original.prototype, 'resolvedOptions', {{
-          value: function(...args) {{
-            const options = resolved.value.apply(this, args);
-            if (defaultIntlInstances.has(this)) {{
-              options.locale = language;
-            }}
-            return options;
-          }},
-          configurable: true,
-          writable: true
-        }});
+        Original.prototype.resolvedOptions = function(...args) {{
+          const options = origResolved.apply(this, args);
+          if (defaultIntlInstances.has(this)) {{
+            options.locale = language;
+          }}
+          return options;
+        }};
       }} catch (_) {{}}
     }}
     const Wrapped = new Proxy(Original, {{
@@ -204,22 +247,14 @@ def _navigator_override_script(profile: FingerprintProfile) -> str:
         return instance;
       }}
     }});
-    try {{
-      Object.defineProperty(Wrapped, 'toString', {{value: () => Original.toString()}});
-    }} catch (_) {{}}
-    try {{
-      Object.defineProperty(Intl, name, {{value: Wrapped, configurable: true, writable: true}});
-    }} catch (_) {{}}
+    try {{ Object.defineProperty(Wrapped, 'toString', {{value: () => Original.toString()}}); }} catch (_) {{}}
+    try {{ Object.defineProperty(Intl, name, {{value: Wrapped, configurable: true, writable: true}}); }} catch (_) {{}}
   }};
   [
-    ['DateTimeFormat', Intl.DateTimeFormat],
-    ['NumberFormat', Intl.NumberFormat],
-    ['Collator', Intl.Collator],
-    ['PluralRules', Intl.PluralRules],
-    ['RelativeTimeFormat', Intl.RelativeTimeFormat],
-    ['ListFormat', Intl.ListFormat],
-    ['Segmenter', Intl.Segmenter]
-  ].forEach(([name]) => patchIntlConstructor(name));
+    'DateTimeFormat', 'NumberFormat', 'Collator', 'PluralRules',
+    'RelativeTimeFormat', 'ListFormat', 'Segmenter',
+    'DisplayNames', 'DurationFormat', 'Locale'
+  ].forEach((name) => patchIntlConstructor(name));
 }})();
 """
 

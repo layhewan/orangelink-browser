@@ -106,7 +106,7 @@ def test_chromium_launch_sets_accept_language_from_cached_proxy_language() -> No
         start_url="https://example.test/",
     )
 
-    assert "--accept-lang=zh-HK,zh;q=0.9" in args
+    assert "--accept-lang=zh-HK,zh" in args
 
 
 def test_chromium_launch_uses_supported_ui_locale_without_changing_web_language() -> None:
@@ -129,7 +129,7 @@ def test_chromium_launch_uses_supported_ui_locale_without_changing_web_language(
     )
 
     assert "--lang=zh-TW" in args
-    assert "--accept-lang=zh-HK,zh;q=0.9" in args
+    assert "--accept-lang=zh-HK,zh" in args
 
 
 def test_chromium_launch_sanitizes_cached_accept_language_value() -> None:
@@ -152,7 +152,7 @@ def test_chromium_launch_sanitizes_cached_accept_language_value() -> None:
     )
 
     assert "--lang=en-US" in args
-    assert "--accept-lang=en-US,en;q=0.9" in args
+    assert "--accept-lang=en-US,en" in args
     assert not any(";q=" in arg for arg in args if arg.startswith("--lang="))
 
 
