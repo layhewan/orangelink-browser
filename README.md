@@ -116,12 +116,6 @@ python -m pytest tests/ -q
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build_portable.ps1 -OutputDir my_build
 ```
 
-### Detection Scores
-
-| browserscan.net | browserscan.org |
-|:---:|:---:|
-| ![browserscan.net](assets/browsernet.png) | ![browserscan.org](assets/browserorg.png) |
-
 ### Project Structure
 
 ```
