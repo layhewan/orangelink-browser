@@ -10,3 +10,4 @@ final_v*/
 chrome-win64/
 relay/target/
 runtime/chromium/
+.claude/
