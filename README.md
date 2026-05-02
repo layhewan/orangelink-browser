@@ -66,6 +66,11 @@ tests/                        # pytest 测试
 
 MIT
 
+### 贡献者 / Contributors
+
+- **layhewan** ([@layhewan](https://github.com/layhewan)) — 项目发起与开发
+- **DeepSeek** — AI 辅助开发
+
 ---
 
 ## English
@@ -116,6 +121,11 @@ scripts/                      # Build/run scripts
 relay/src/main.rs             # Rust proxy relay
 tests/                        # pytest test suite
 ```
+
+### Contributors
+
+- **layhewan** ([@layhewan](https://github.com/layhewan)) — Project lead & development
+- **DeepSeek** — AI-assisted development
 
 ### License
 
