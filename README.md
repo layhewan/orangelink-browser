@@ -68,7 +68,7 @@ MIT
 
 ### 贡献者 / Contributors
 
-- **layhewan** ([@layhewan](https://github.com/layhewan)) — 项目发起与开发
+- **Claude Code** (Anthropic) — AI 辅助开发
 - **DeepSeek** — AI 辅助开发
 
 ---
@@ -124,7 +124,7 @@ tests/                        # pytest test suite
 
 ### Contributors
 
-- **layhewan** ([@layhewan](https://github.com/layhewan)) — Project lead & development
+- **Claude Code** (Anthropic) — AI-assisted development
 - **DeepSeek** — AI-assisted development
 
 ### License

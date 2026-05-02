@@ -11,3 +11,5 @@ chrome-win64/
 relay/target/
 runtime/chromium/
 .claude/
+tests/
+WORK_SUMMARY.md
