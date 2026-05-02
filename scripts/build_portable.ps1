@@ -18,8 +18,8 @@ $BundledChromiumSource = Join-Path $RepoRoot "runtime\chromium"
 
 # Auto-detect system Chrome and copy to chrome-win64 (overwrites any Chrome for Testing)
 $SystemChromePaths = @(
-    "C:\Program Files\Google\Chrome\Application\chrome.exe",
-    "C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"
+    "path\to\chrome.exe",
+    "path\to\Google\Chrome\Application\chrome.exe"
 )
 $SystemChromeFound = $false
 foreach ($path in $SystemChromePaths) {
