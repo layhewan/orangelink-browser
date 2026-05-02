@@ -6,5 +6,7 @@ build/
 final_exe_rc/
 final_exe_rc*/
 final_exe*/
+final_v*/
+chrome-win64/
 relay/target/
 runtime/chromium/
