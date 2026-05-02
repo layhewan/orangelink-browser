@@ -59,6 +59,7 @@ class ChromiumLauncher:
         cdp_port = self._port_allocator()
         resolved_profile_dir = profile_dir or self.paths.profiles / session_id
         resolved_profile_dir.mkdir(parents=True, exist_ok=True)
+        _clean_stale_singleton_files(resolved_profile_dir)
         _write_language_preferences(resolved_profile_dir, config)
         args = build_chromium_args(
             config=config,
@@ -146,11 +147,12 @@ def build_chromium_args(
         str(chrome_executable),
         "--no-first-run",
         "--no-default-browser-check",
+        "--new-window",
         "--disable-breakpad",
         "--disable-crash-reporter",
         "--disable-session-crashed-bubble",
         "--disable-blink-features=AutomationControlled",
-        "--disable-features=DnsOverHttps,UseDnsHttpsSvcb,Quic",
+        "--disable-features=DnsOverHttps,UseDnsHttpsSvcb,Quic,ChromeWhatsNewUI,InterestFeedContentSuggestions,MediaRouter,TranslateUI,ChromeForTesting",
         "--webrtc-ip-handling-policy=disable_non_proxied_udp",
         "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
         f"--lang={_launch_ui_language(config)}",
@@ -194,7 +196,8 @@ def _launch_accept_language(config: LaunchConfig) -> str:
     if "-" not in language:
         return language
     base = language.split("-", 1)[0]
-    return f"{language},{base};q=0.9"
+    # Return language tags without q factors; Chrome adds them internally
+    return f"{language},{base}"
 
 
 def _launch_ui_language(config: LaunchConfig) -> str:
@@ -296,3 +299,17 @@ def _allocate_local_port() -> int:
 def _hidden_child_process_kwargs() -> dict[str, int]:
     create_no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     return {"creationflags": create_no_window} if create_no_window else {}
+
+
+_CHROMIUM_SINGLETON_FILES = ("SingletonLock", "SingletonCookie", "SingletonSocket", "SingletonMHBE")
+
+
+def _clean_stale_singleton_files(profile_dir: Path) -> None:
+    """Remove stale Chromium singleton lock files that could interfere with launch."""
+    for name in _CHROMIUM_SINGLETON_FILES:
+        candidate = profile_dir / name
+        try:
+            if candidate.is_file():
+                candidate.unlink()
+        except OSError:
+            pass

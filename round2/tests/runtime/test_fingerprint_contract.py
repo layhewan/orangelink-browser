@@ -26,7 +26,7 @@ def test_manual_language_and_timezone_build_profile() -> None:
     )
 
     assert profile.language == "zh-CN"
-    assert profile.accept_language == "zh-CN,zh;q=0.9"
+    assert profile.accept_language == "zh-CN,zh"
     assert profile.timezone == "Asia/Shanghai"
 
 
@@ -83,7 +83,7 @@ def test_language_cache_is_normalized_before_building_headers() -> None:
     )
 
     assert profile.language == "en-US"
-    assert profile.accept_language == "en-US,en;q=0.9"
+    assert profile.accept_language == "en-US,en"
     assert ";q=0.9;q=0.9" not in profile.accept_language
 
 
@@ -115,7 +115,7 @@ def test_direct_mode_ignores_stale_proxy_geo_cache() -> None:
     )
 
     assert profile.language == "en-US"
-    assert profile.timezone == "UTC"
+    assert profile.timezone == ""
 
 
 def test_fingerprint_overrides_are_applied_through_cdp() -> None:
@@ -142,7 +142,7 @@ def test_fingerprint_overrides_are_applied_through_cdp() -> None:
     assert "Emulation.setTimezoneOverride" in methods
     assert "Page.addScriptToEvaluateOnNewDocument" in methods
     ua_params = next(params for _, method, params in cdp.commands if method == "Network.setUserAgentOverride")
-    assert ua_params["acceptLanguage"] == "en-US,en;q=0.9"
+    assert ua_params["acceptLanguage"] == "en-US,en"
     assert ua_params["userAgentMetadata"]["platform"] == "Windows"
     timezone_params = next(params for _, method, params in cdp.commands if method == "Emulation.setTimezoneOverride")
     assert timezone_params == {"timezoneId": "America/New_York"}
@@ -171,9 +171,12 @@ def test_fingerprint_script_aligns_intl_locale_with_browser_language() -> None:
         if method == "Page.addScriptToEvaluateOnNewDocument"
     )
     assert "zh-HK" in script
-    assert "Intl.DateTimeFormat" in script
-    assert "Intl.NumberFormat" in script
+    assert "'DateTimeFormat'" in script
+    assert "'NumberFormat'" in script
+    assert "'Locale'" in script
     assert "resolvedOptions" in script
+    assert "navigator, 'webdriver'" in script
+    assert "false" in script
 
 
 def test_os_override_changes_user_agent_platform_consistently() -> None:

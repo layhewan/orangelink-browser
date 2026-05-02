@@ -217,7 +217,7 @@ def test_chromium_launcher_persists_profile_accept_language_preference() -> None
     )
 
     preferences = json.loads((result.profile_dir / "Default" / "Preferences").read_text(encoding="utf-8"))
-    assert preferences["intl"]["accept_languages"] == "zh-HK,zh;q=0.9"
+    assert preferences["intl"]["accept_languages"] == "zh-HK,zh"
 
 
 def test_chromium_launcher_keeps_hong_kong_web_locale_when_ui_locale_falls_back() -> None:
@@ -247,7 +247,7 @@ def test_chromium_launcher_keeps_hong_kong_web_locale_when_ui_locale_falls_back(
     )
 
     assert "--lang=zh-TW" in result.args
-    assert "--accept-lang=zh-HK,zh;q=0.9" in result.args
+    assert "--accept-lang=zh-HK,zh" in result.args
 
 
 def test_proxy_relay_ready_wait_times_out_instead_of_hanging_gui() -> None:
