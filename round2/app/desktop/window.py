@@ -165,12 +165,7 @@ def create_main_window(
     window = OrangelinkMainWindow()
     window.setWindowTitle(ZH_UI_STRINGS["window_title"])
     icon_path = _asset_icon_path()
-    if getattr(sys, "frozen", False):
-        try:
-            window.setWindowIcon(QIcon(sys.executable))
-        except Exception:
-            pass
-    elif icon_path.exists():
+    if icon_path.exists():
         window.setWindowIcon(QIcon(str(icon_path)))
     window.setMinimumSize(*MINIMUM_WINDOW_SIZE)
     window.resize(*MINIMUM_WINDOW_SIZE)
@@ -447,7 +442,7 @@ def create_main_window(
                 if need_proxy_check:
                     try:
                         with socket.create_connection(
-                            (cfg.proxy_host, int(cfg.proxy_port or 0)), timeout=0.3
+                            (cfg.proxy_host, int(cfg.proxy_port or 0)), timeout=1
                         ):
                             pass
                     except (OSError, ValueError):
@@ -574,7 +569,7 @@ def create_main_window(
                 try:
                     with socket.create_connection(
                         (launch_config.proxy_host, int(launch_config.proxy_port or 0)),
-                        timeout=0.3,
+                        timeout=1,
                     ):
                         enriched, _ = _enrich_config_async(launch_config, geo_probe=geo_probe)
                 except (OSError, ValueError):
